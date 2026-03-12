@@ -1,5 +1,6 @@
 # Main
 .idea/
+.vscode/
 secret.*
 .DS_Store
 
