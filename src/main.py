@@ -1,8 +1,10 @@
 import argparse
 import json
 from dataclasses import dataclass
+import os
 from pathlib import Path
 
+import cv2
 import numpy as np
 from tqdm import tqdm
 
@@ -37,6 +39,7 @@ class BallDetection:
 @dataclass(frozen=True)
 class ImageResult:
     image_path: str
+    top_down_img: cv2.Mat
     balls: list[BallDetection]
 
     def to_dict(self) -> dict:
@@ -52,9 +55,14 @@ class BallDetectConfig:
     max_balls: int = 16
 
 
-def process_image(image_path: Path, config: BallDetectConfig) -> ImageResult:
-    # TODO
-    return ImageResult(image_path=str(image_path), balls=[])
+def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfig) -> ImageResult:
+    img = cv2.imread(str(full_img_path))
+
+    return ImageResult(
+        image_path=str(image_path),
+        top_down_img=img,
+        balls=[]
+    )
 
 
 def parse_args() -> argparse.Namespace:
@@ -69,20 +77,30 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
+    os.makedirs(args.topdown_dir, exist_ok=True)
+    os.makedirs(args.output_json.parent, exist_ok=True)
+
     # Load input JSON
     with open(args.input_json, "r") as f:
         input_data: dict = json.load(f)
         image_paths: list[str] = input_data.get("image_path", [])
 
+    # Process each image and collect results
     results: list[ImageResult] = []
     for img_path in tqdm(image_paths, desc="Processing images"):
-        image_result = process_image(Path(img_path), BallDetectConfig())
+        full_img_path = args.data_dir / Path(img_path)
+        image_result = process_image(full_img_path, img_path, BallDetectConfig())
         results.append(image_result)
 
     # Save output JSON
     output_data = [result.to_dict() for result in results]
     with open(args.output_json, "w") as f:
         json.dump(output_data, f, indent=4)
+
+    # Save result images
+    for result in results:
+        output_image_path = args.topdown_dir / Path(result.image_path).name
+        cv2.imwrite(str(output_image_path), result.top_down_img)
 
 
 if __name__ == "__main__":

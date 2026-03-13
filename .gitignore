@@ -1,6 +1,7 @@
 # Main
 .idea/
 .vscode/
+data/result_set/
 secret.*
 .DS_Store
 
