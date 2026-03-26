@@ -1,8 +1,10 @@
 # Main
 .idea/
 .vscode/
-data/result_set/
-secret.*
+data/*
+!data/json/input.json
+!data/json/output_example.json
+!data/development_set/*
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
