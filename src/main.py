@@ -87,8 +87,8 @@ def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray
 
     lower_blue = np.array([
         max(0, dominant_hue - hue_window),
-        max(0, s_low - 30),
-        max(0, v_low - 30)
+        max(0, s_low - 60),
+        max(0, v_low - 60)
     ], dtype=np.uint8)
 
     upper_blue = np.array([
@@ -98,6 +98,29 @@ def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray
     ], dtype=np.uint8)
 
     return lower_blue, upper_blue, (x0, y0, x1, y1)
+
+def keep_only_close_contours(mask, distance_threshold=100):
+    contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    contours = sorted(contours, key=cv2.contourArea, reverse=True)
+    contours = [c for c in contours if cv2.contourArea(c) > 50]
+
+    biggest_contour = contours[0]
+
+    def contour_distance(c1, c2):
+        pts1 = c1.reshape(-1, 2)
+        pts2 = c2.reshape(-1, 2)
+        dists = np.linalg.norm(pts1[:, None, :] - pts2[None, :, :], axis=2)
+        return dists.min()
+
+    contours_close = [
+        c for c in contours
+        if c is biggest_contour or contour_distance(biggest_contour, c) < distance_threshold
+    ]
+
+    filtered_mask_table = np.zeros_like(mask)
+    cv2.drawContours(filtered_mask_table, contours_close, -1, 255, thickness=cv2.FILLED)
+
+    return filtered_mask_table, contours_close
 
 def get_lines(mask_image, min_length=250):
     edges = cv2.Canny(mask_image, 50, 150)
@@ -120,7 +143,7 @@ def get_lines(mask_image, min_length=250):
     
     return lines
 
-def get_inner_outer_lines(lines, center, angle_threshold=0.03, distance_threshold=70):
+def get_inner_outer_lines(lines, center, image, angle_threshold=0.03, distance_threshold=70):
     segments = []
     for line in lines:
         rho, theta = get_hessel(line)
@@ -193,19 +216,20 @@ def get_inner_outer_lines(lines, center, angle_threshold=0.03, distance_threshol
             new_groups.append(first)
         groups = new_groups
 
-    # for idx, group in enumerate(groups):
-    #     print(f"Group {idx + 1}")
-    #     for line_id in group:
-    #         line, rho, theta = segments[line_id]
-    #         print(f"  Line {line_id}: rho={rho:.2f}, theta={theta:.2f};")
+    groups.sort(key=len, reverse=True)
 
     # select 4 most bigger groups
-    # TODO: if 2 least groups have similar size
-    # choose the one with more parallel line to bigger groups
-    if len(groups[-1]) == len(groups[-2]) and len(groups) > 4:
-        print("TODO: choose between last 2 groups")
-    groups.sort(key=len, reverse=True)
-    groups = groups[:4]
+    # if len(groups) > 4:
+    #     groups = groups[:3]
+
+    #     print("TODO: choose between last 2 groups")
+    #     for idx, group in enumerate(groups[3:]):
+    #         intersection_points = get_intersections(lines, image.shape[0], image.shape[1])
+
+    #         print(f"Group {idx + 1}")
+    #         for line_id in group:
+    #             line, rho, theta = segments[line_id]
+    #             print(f"  Line {line_id}: rho={rho:.2f}, theta={theta:.2f};")
 
     outer_lines = {}
     inner_lines = {}
@@ -249,10 +273,35 @@ def get_dist_center(rho, theta, center):
     cx, cy = center
     return cx * math.cos(theta) + cy * math.sin(theta) - rho
 
+def select_4_groups_from_largest_3(inner_lines, outer_lines, h, w):
+    inner_keys = list(inner_lines.keys())
+    outer_keys = list(outer_lines.keys())
+
+    base_inner_keys = inner_keys[:3]
+    base_outer_keys = outer_keys[:3]
+
+    if len(inner_keys) != len(outer_keys):
+        print("Warning: number of inner and outer lines differ, cannot reliably select 4 groups")
+
+    for i in range(3, min(len(inner_keys), len(outer_keys))):
+        candidate_inner_keys = base_inner_keys + [inner_keys[i]]
+        candidate_outer_keys = base_outer_keys + [outer_keys[i]]
+
+        candidate_inner = {k: inner_lines[k] for k in candidate_inner_keys}
+        candidate_outer = {k: outer_lines[k] for k in candidate_outer_keys}
+
+        intersection_points_inner = get_intersections(candidate_inner, h, w)
+        intersection_points_outer = get_intersections(candidate_outer, h, w)
+    
+        if len(intersection_points_inner) == 4 and len(intersection_points_outer) == 4:
+            return candidate_inner, candidate_outer
+
+    return None, None
+
 def get_intersections(lines, h, w):
     def line_intersection_infinite(l1, l2, eps=1e-9):
-        x1, y1, x2, y2 = l1[0]
-        x3, y3, x4, y4 = l2[0]
+        x1, y1, x2, y2 = map(float, l1[0])
+        x3, y3, x4, y4 = map(float, l2[0])
 
         denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
         if abs(denom) < eps:
@@ -264,7 +313,10 @@ def get_intersections(lines, h, w):
         py = (det1 * (y3 - y4) - (y1 - y2) * det2) / denom
         return float(px), float(py)
 
-    line_segments = [seg[0] for seg in lines.values()]
+    if isinstance(lines, dict):
+        line_segments = [seg[0] for seg in lines.values()]
+    else:
+        line_segments = [seg[0] for seg in lines]
 
     raw_points = []
     for l1, l2 in itertools.combinations(line_segments, 2):
@@ -420,7 +472,7 @@ def find_dot(image, lower_blue, upper_blue):
     result_countours = []
 
     # almost entirely blue => nothing here
-    if blue_ratio > 0.97:
+    if blue_ratio > 0.99:
         return False, False, True, debug_img, candidates_info, result_countours
 
     # non-blue regions = candidates
@@ -583,23 +635,45 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
 
     mask_table = cv2.inRange(hsv_image, lower_blue, upper_blue)
 
-    lines = get_lines(mask_table, min_length=250)
+    kernel = np.ones((7, 7), np.uint8)
+    mask_table = cv2.morphologyEx(mask_table, cv2.MORPH_OPEN, kernel)
+    mask_table = cv2.morphologyEx(mask_table, cv2.MORPH_CLOSE, kernel)
+
+    mask_table, _ = keep_only_close_contours(mask_table, distance_threshold=50)
+
+    lines = get_lines(mask_table, min_length=200)
 
     edge_points = [line[0] for line in lines]
     center = [((x1 + x2) // 2, (y1 + y2) // 2) for (x1, y1, x2, y2) in edge_points]
     center = np.mean(center, axis=0).astype(int)
 
-    inner_lines, outer_lines = get_inner_outer_lines(lines, center)
+    inner_lines, outer_lines = get_inner_outer_lines(lines, center, image)
 
     if len(outer_lines) < 4 or len(inner_lines) < 4:
         print("[DEBUG] Not enough lines found, retrying with wider hue window.")
         lower_blue, upper_blue, _ = get_upper_lower_blue(hsv_image, hue_window=5)
         mask_table = cv2.inRange(hsv_image, lower_blue, upper_blue)
         lines = get_lines(mask_table, min_length=250)
-        inner_lines, outer_lines = get_inner_outer_lines(lines, center)
+        inner_lines, outer_lines = get_inner_outer_lines(lines, center, image)
+    
+    if len(outer_lines) > 4 or len(inner_lines) > 4:
+        selected_inner, selected_outer = select_4_groups_from_largest_3(
+            inner_lines, outer_lines, image.shape[0], image.shape[1]
+        )
+
+        if selected_inner is not None and selected_outer is not None:
+            inner_lines = selected_inner
+            outer_lines = selected_outer
 
     intersection_points_outer = get_intersections(outer_lines, image.shape[0], image.shape[1])
     intersection_points_inner = get_intersections(inner_lines, image.shape[0], image.shape[1])
+
+    if len(intersection_points_outer) != 4:
+        intersection_points_outer = sorted(intersection_points_outer, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+        intersection_points_outer = np.array(intersection_points_outer[:4], dtype=np.float32)
+    if len(intersection_points_inner) != 4:
+        intersection_points_inner = sorted(intersection_points_inner, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+        intersection_points_inner = np.array(intersection_points_inner[:4], dtype=np.float32)
 
     if len(intersection_points_outer) > 4 or len(intersection_points_inner) > 4:
         print("[DEBUG] Too many intersection points found.")
