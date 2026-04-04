@@ -39,7 +39,7 @@ class BallDetection:
         return result
 
 
-@dataclass(frozen=True)
+@dataclass
 class ImageResult:
     image_path: str
     top_down_img: cv2.Mat
@@ -56,6 +56,7 @@ class ImageResult:
 @dataclass(frozen=True)
 class BallDetectConfig:
     max_balls: int = 16
+
 
 def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]]:
     h, w = hsv_image.shape[:2]
@@ -79,10 +80,10 @@ def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray
 
     near_hue = valid & (np.abs(H.astype(np.int16) - int(dominant_hue)) <= hue_window)
 
-    s_low  = int(np.percentile(S[near_hue], 10))    # ignores the lowest 10% of pixels
+    s_low = int(np.percentile(S[near_hue], 10))
     s_high = int(np.percentile(S[near_hue], 95))
 
-    v_low  = int(np.percentile(V[near_hue], 5))
+    v_low = int(np.percentile(V[near_hue], 5))
     v_high = int(np.percentile(V[near_hue], 95))
 
     lower_blue = np.array([
@@ -98,6 +99,7 @@ def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray
     ], dtype=np.uint8)
 
     return lower_blue, upper_blue, (x0, y0, x1, y1)
+
 
 def keep_only_close_contours(mask, distance_threshold=100):
     contours, _ = cv2.findContours(mask, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
@@ -122,6 +124,7 @@ def keep_only_close_contours(mask, distance_threshold=100):
 
     return filtered_mask_table, contours_close
 
+
 def get_lines(mask_image, min_length=250):
     edges = cv2.Canny(mask_image, 50, 150)
 
@@ -140,8 +143,9 @@ def get_lines(mask_image, min_length=250):
         length = math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2)
         if length >= min_length:
             lines.append(line)
-    
+
     return lines
+
 
 def get_inner_outer_lines(lines, center, image, angle_threshold=0.03, distance_threshold=70):
     segments = []
@@ -165,15 +169,15 @@ def get_inner_outer_lines(lines, center, image, angle_threshold=0.03, distance_t
             # print(min(abs(rho1 - rho2), abs(rho1 + rho2)))
             if min(abs(rho1 - rho2), abs(rho1 + rho2)) > distance_threshold:
                 continue
-            
-            if not any (i in g for g in groups) and not any (j in g for g in groups):
+
+            if not any(i in g for g in groups) and not any(j in g for g in groups):
                 groups.append(set([i, j]))
-            elif any (i in g for g in groups):
+            elif any(i in g for g in groups):
                 for group in groups:
                     if i in group:
                         group.add(j)
                         break
-            elif any (j in g for g in groups):
+            elif any(j in g for g in groups):
                 for group in groups:
                     if j in group:
                         group.add(i)
@@ -218,19 +222,6 @@ def get_inner_outer_lines(lines, center, image, angle_threshold=0.03, distance_t
 
     groups.sort(key=len, reverse=True)
 
-    # select 4 most bigger groups
-    # if len(groups) > 4:
-    #     groups = groups[:3]
-
-    #     print("TODO: choose between last 2 groups")
-    #     for idx, group in enumerate(groups[3:]):
-    #         intersection_points = get_intersections(lines, image.shape[0], image.shape[1])
-
-    #         print(f"Group {idx + 1}")
-    #         for line_id in group:
-    #             line, rho, theta = segments[line_id]
-    #             print(f"  Line {line_id}: rho={rho:.2f}, theta={theta:.2f};")
-
     outer_lines = {}
     inner_lines = {}
 
@@ -249,6 +240,7 @@ def get_inner_outer_lines(lines, center, image, angle_threshold=0.03, distance_t
 
     return inner_lines, outer_lines
 
+
 def get_hessel(line):
     x1, y1, x2, y2 = line[0]
 
@@ -265,13 +257,16 @@ def get_hessel(line):
 
     return (rho, theta)
 
+
 def get_diff_pi(a, b):
     diff = abs(a - b)
     return min(diff, np.pi - diff)
 
+
 def get_dist_center(rho, theta, center):
     cx, cy = center
     return cx * math.cos(theta) + cy * math.sin(theta) - rho
+
 
 def select_4_groups_from_largest_3(inner_lines, outer_lines, h, w):
     inner_keys = list(inner_lines.keys())
@@ -281,7 +276,7 @@ def select_4_groups_from_largest_3(inner_lines, outer_lines, h, w):
     base_outer_keys = outer_keys[:3]
 
     if len(inner_keys) != len(outer_keys):
-        print("Warning: number of inner and outer lines differ, cannot reliably select 4 groups")
+        print("[WARNING] number of inner and outer lines differ")
 
     for i in range(3, min(len(inner_keys), len(outer_keys))):
         candidate_inner_keys = base_inner_keys + [inner_keys[i]]
@@ -292,27 +287,29 @@ def select_4_groups_from_largest_3(inner_lines, outer_lines, h, w):
 
         intersection_points_inner = get_intersections(candidate_inner, h, w)
         intersection_points_outer = get_intersections(candidate_outer, h, w)
-    
+
         if len(intersection_points_inner) == 4 and len(intersection_points_outer) == 4:
             return candidate_inner, candidate_outer
 
     return None, None
 
+
+def line_intersection_infinite(l1, l2, eps=1e-9):
+    x1, y1, x2, y2 = map(float, l1[0])
+    x3, y3, x4, y4 = map(float, l2[0])
+
+    denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
+    if abs(denom) < eps:
+        return None
+
+    det1 = x1 * y2 - y1 * x2
+    det2 = x3 * y4 - y3 * x4
+    px = (det1 * (x3 - x4) - (x1 - x2) * det2) / denom
+    py = (det1 * (y3 - y4) - (y1 - y2) * det2) / denom
+    return float(px), float(py)
+
+
 def get_intersections(lines, h, w):
-    def line_intersection_infinite(l1, l2, eps=1e-9):
-        x1, y1, x2, y2 = map(float, l1[0])
-        x3, y3, x4, y4 = map(float, l2[0])
-
-        denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
-        if abs(denom) < eps:
-            return None
-
-        det1 = x1 * y2 - y1 * x2
-        det2 = x3 * y4 - y3 * x4
-        px = (det1 * (x3 - x4) - (x1 - x2) * det2) / denom
-        py = (det1 * (y3 - y4) - (y1 - y2) * det2) / denom
-        return float(px), float(py)
-
     if isinstance(lines, dict):
         line_segments = [seg[0] for seg in lines.values()]
     else:
@@ -330,6 +327,7 @@ def get_intersections(lines, h, w):
 
     intersection_points = np.array(list(raw_points), dtype=np.float32)
     return intersection_points
+
 
 def order_points_by_angle(points_a, points_b):
     """
@@ -357,6 +355,7 @@ def order_points_by_angle(points_a, points_b):
 
     return points_a_ord, points_b_ord, angles, order
 
+
 def got_angle(points) -> tuple[bool, bool, bool, tuple]:
     """
     (t1, t2, b1, b2), where t1, t2 are top points, b1, b2 are bottom points
@@ -375,7 +374,7 @@ def got_angle(points) -> tuple[bool, bool, bool, tuple]:
     if abs(t_w - b_w) < 30:
         is_top = True
         return is_top, is_front, is_angle, (t1, t2, b1, b2)
-    
+
     # in front-view top_line and bottom_line are parallel
     dy1 = abs(t1[1] - b1[1])
     dy2 = abs(t2[1] - b2[1])
@@ -384,9 +383,10 @@ def got_angle(points) -> tuple[bool, bool, bool, tuple]:
     if abs(dy1 - dy2) < 20:
         is_front = True
         return is_top, is_front, is_angle, (t1, t2, b1, b2)
-    
+
     is_angle = True
     return is_top, is_front, is_angle, (t1, t2, b1, b2)
+
 
 def warp_table_variant(image, pts, pad=0, w=2000, h=2000, inner_color=(0, 255, 0), pad_color=(255, 0, 0)):
     pts = np.array(pts, dtype=np.float32)
@@ -451,6 +451,7 @@ def warp_table_variant(image, pts, pad=0, w=2000, h=2000, inner_color=(0, 255, 0
 
     return result, pts
 
+
 def find_dot(image, lower_blue, upper_blue):
     has_dot = False
     has_boll = False
@@ -484,23 +485,12 @@ def find_dot(image, lower_blue, upper_blue):
     non_blue = cv2.morphologyEx(non_blue, cv2.MORPH_OPEN, k3, iterations=1)
     non_blue = cv2.morphologyEx(non_blue, cv2.MORPH_CLOSE, k5, iterations=1)
 
-    gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-
     # white center of the dot: low saturation + high value
     white_mask = np.zeros((h, w), dtype=np.uint8)
     white_mask[(hsv[:, :, 1] < 90) & (hsv[:, :, 2] > 150)] = 255
 
-    # dark region around the white center
-    dark_mask = cv2.inRange(gray, 0, 110)
-
     contours, _ = cv2.findContours(non_blue, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
     contours = sorted(contours, key=cv2.contourArea, reverse=True)
-
-    WHITE_R = 3
-    DARK_R1 = 4
-    DARK_R2 = 11
-    BLUE_R1 = 12
-    BLUE_R2 = 18
 
     for i, cnt in enumerate(contours):
         area = cv2.contourArea(cnt)
@@ -512,77 +502,6 @@ def find_dot(image, lower_blue, upper_blue):
         x, y, bw, bh = cv2.boundingRect(cnt)
         touches_edge = (x <= 1 or y <= 1 or x + bw >= w - 2 or y + bh >= h - 2)
 
-        # bbox center as fallback
-        bx = x + bw // 2
-        by = y + bh // 2
-
-        # 1: find a small white blob inside the candidate
-        roi_white = white_mask[y:y + bh, x:x + bw]
-        white_contours, _ = cv2.findContours(roi_white, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
-
-        chosen_white = None
-        chosen_white_area = 0
-        best_white_score = -1e9
-
-        for wc in white_contours:
-            wa = cv2.contourArea(wc)
-            if wa < 2 or wa > 180:
-                continue
-
-            wx, wy, ww, wh = cv2.boundingRect(wc)
-            wM = cv2.moments(wc)
-
-            if wM["m00"] > 0:
-                wcx_local = int(wM["m10"] / wM["m00"])
-                wcy_local = int(wM["m01"] / wM["m00"])
-            else:
-                wcx_local = wx + ww // 2
-                wcy_local = wy + wh // 2
-
-            wcx = x + wcx_local
-            wcy = y + wcy_local
-
-            # prefer a reasonably sized white blob near the candidate center
-            dist_to_bbox_center = np.hypot(wcx - bx, wcy - by)
-            score = 2.0 * wa - 0.35 * dist_to_bbox_center
-
-            if score > best_white_score:
-                best_white_score = score
-                chosen_white = (wcx, wcy)
-                chosen_white_area = wa
-
-        # if no white blob found, fall back to blob center
-        if chosen_white is not None:
-            cx, cy = chosen_white
-        else:
-            cx, cy = bx, by
-
-        # 2: check dot structure around that center white center + dark ring + blue outside
-        pad = BLUE_R2 + 2
-        x0 = max(cx - pad, 0)
-        y0 = max(cy - pad, 0)
-        x1 = min(cx + pad + 1, w)
-        y1 = min(cy + pad + 1, h)
-
-        roi_blue = blue_mask[y0:y1, x0:x1]
-        roi_white2 = white_mask[y0:y1, x0:x1]
-        roi_dark = dark_mask[y0:y1, x0:x1]
-
-        yy, xx = np.ogrid[y0:y1, x0:x1]
-        dist = np.sqrt((xx - cx) ** 2 + (yy - cy) ** 2)
-
-        inner = dist <= WHITE_R
-        dark_ring = (dist > DARK_R1) & (dist <= DARK_R2)
-        blue_outer = (dist > BLUE_R1) & (dist <= BLUE_R2)
-
-        inner_n = max(np.count_nonzero(inner), 1)
-        dark_n = max(np.count_nonzero(dark_ring), 1)
-        blue_n = max(np.count_nonzero(blue_outer), 1)
-
-        white_inner_ratio = np.count_nonzero(roi_white2[inner]) / inner_n
-        dark_ring_ratio = np.count_nonzero(roi_dark[dark_ring]) / dark_n
-        blue_outer_ratio = np.count_nonzero(roi_blue[blue_outer]) / blue_n
-
         # TODO: make decision here
         if touches_edge:
             has_boll = True
@@ -592,38 +511,14 @@ def find_dot(image, lower_blue, upper_blue):
         if not touches_edge and area < 2400:
             has_dot = True
 
-        # ------------------------------------------------------------
-        # DEBUG DRAWING
-        # ------------------------------------------------------------
-        cv2.rectangle(debug_img, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
-        cv2.circle(debug_img, (cx, cy), 2, (0, 255, 0), -1)
-
-        # draw sampling rings around tested center
-        cv2.circle(debug_img, (cx, cy), WHITE_R, (0, 255, 255), 1)
-        cv2.circle(debug_img, (cx, cy), DARK_R2, (255, 0, 255), 1)
-        cv2.circle(debug_img, (cx, cy), BLUE_R2, (0, 165, 255), 1)
-
-        candidates_info.append({
-            "index": i,
-            "bbox": (x, y, bw, bh),
-            "center": (cx, cy),
-            "area": float(area),
-            "white_area": float(chosen_white_area),
-            "white_inner_ratio": float(white_inner_ratio),
-            "dark_ring_ratio": float(dark_ring_ratio),
-            "blue_outer_ratio": float(blue_outer_ratio),
-            "touches_edge": bool(touches_edge),
-        })
-
     return has_dot, has_boll, is_empty, debug_img, candidates_info, result_countours
 
 
 def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfig) -> ImageResult:
     print(f"Processing image: {image_path}")
     image = cv2.imread(str(full_img_path))
-    desired_width = 3360
-    scale_factor = desired_width / image.shape[1]
-    new_dimensions = (desired_width, int(image.shape[0] * scale_factor))
+    scale_factor = 3360 / image.shape[1]
+    new_dimensions = (3360, int(image.shape[0] * scale_factor))
     image = cv2.resize(image, new_dimensions, interpolation=cv2.INTER_AREA)
     image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
@@ -655,7 +550,7 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
         mask_table = cv2.inRange(hsv_image, lower_blue, upper_blue)
         lines = get_lines(mask_table, min_length=250)
         inner_lines, outer_lines = get_inner_outer_lines(lines, center, image)
-    
+
     if len(outer_lines) > 4 or len(inner_lines) > 4:
         selected_inner, selected_outer = select_4_groups_from_largest_3(
             inner_lines, outer_lines, image.shape[0], image.shape[1]
@@ -669,16 +564,19 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
     intersection_points_inner = get_intersections(inner_lines, image.shape[0], image.shape[1])
 
     if len(intersection_points_outer) != 4:
-        intersection_points_outer = sorted(intersection_points_outer, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+        intersection_points_outer = sorted(intersection_points_outer, key=lambda p: math.sqrt(
+            (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
         intersection_points_outer = np.array(intersection_points_outer[:4], dtype=np.float32)
     if len(intersection_points_inner) != 4:
-        intersection_points_inner = sorted(intersection_points_inner, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+        intersection_points_inner = sorted(intersection_points_inner, key=lambda p: math.sqrt(
+            (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
         intersection_points_inner = np.array(intersection_points_inner[:4], dtype=np.float32)
 
     if len(intersection_points_outer) > 4 or len(intersection_points_inner) > 4:
         print("[DEBUG] Too many intersection points found.")
 
-    pts_ordered_outer, pts_ordered_inner, angles, order = order_points_by_angle(intersection_points_outer, intersection_points_inner)
+    pts_ordered_outer, pts_ordered_inner, _, _ = order_points_by_angle(
+        intersection_points_outer, intersection_points_inner)
 
     is_top, is_front, is_angle, (t1, t2, b1, b2) = got_angle(pts_ordered_outer)
     start_point = None
@@ -691,7 +589,8 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
 
     start_by_angle = np.where((pts_ordered_outer == start_point).all(axis=1))[0][0]
 
-    img_warped = warp_table_variant(image, pts_ordered_inner, pad=0, w=2000, h=2000, inner_color=(74, 158, 229), pad_color=(85, 90, 85))[0]
+    img_warped = warp_table_variant(image, pts_ordered_inner, pad=0, w=2000, h=2000,
+                                    inner_color=(74, 158, 229), pad_color=(85, 90, 85))[0]
 
     w, h = img_warped.shape[1], img_warped.shape[0]
     pad = 80
@@ -704,16 +603,16 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
     sub_img_warped = []
     for i, center in enumerate(centers):
         sub_img_warped.append(img_warped[int(center[1]-pad):int(center[1]+pad), int(center[0]-pad):int(center[0]+pad)])
-    
+
     dots = []
     for i in range(4):
-        has_dot, has_boll, is_empty, debug_img, info, countours = find_dot(sub_img_warped[i], lower_blue, upper_blue)
+        has_dot, has_boll, is_empty, _, _, countours = find_dot(sub_img_warped[i], lower_blue, upper_blue)
         total_area = 0
         for cnt in countours:
             area = cv2.contourArea(cnt)
             total_area += area
         dots.append((has_dot, has_boll, is_empty, total_area))
-    
+
     start_by_dot = None
     start_by_dot_and_ball = None
     start_by_ball = None
@@ -741,11 +640,16 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
         start = start_by_angle
 
     if start != start_by_angle:
-        print(f"[DEBUG] Start point determined by angle: {start_by_angle}, but start point determined by dot/ball detection is: {start}.")
-    
+        print(f"[DEBUG] {start_by_angle=}, {start=}.")
+
     pts_ordered_outer_correct = np.roll(pts_ordered_outer, -start, axis=0)
 
-    img_warped = warp_table_variant(image, pts_ordered_outer_correct, pad=75, w=1600, h=1000, inner_color=(74, 158, 229), pad_color=(85, 90, 85))[0]
+    img_warped = warp_table_variant(
+        image,
+        pts_ordered_outer_correct,
+        pad=75, w=1600, h=1000,
+        inner_color=(74, 158, 229), pad_color=(85, 90, 85)
+    )[0]
 
     return ImageResult(
         image_path=str(image_path),
@@ -778,24 +682,21 @@ def main() -> int:
     results: list[ImageResult] = []
     for img_path in image_paths:
         full_img_path = args.data_dir / Path(img_path)
+        try:
+            image_result = process_image(full_img_path, img_path, BallDetectConfig())
 
-        image_result = process_image(full_img_path, img_path, BallDetectConfig())
+            output_image_path = args.topdown_dir / Path(image_result.image_path).name
+            cv2.imwrite(str(output_image_path), cv2.cvtColor(image_result.top_down_img, cv2.COLOR_RGB2BGR))
 
-        results.append(image_result)
+            image_result.top_down_img = None
+            results.append(image_result)
+        except Exception as e:
+            print(f"Error processing {img_path}:\n{e}")
+            continue
 
-        # Debug
-        output_image_path = args.topdown_dir / Path(image_result.image_path).name
-        cv2.imwrite(str(output_image_path), cv2.cvtColor(image_result.top_down_img, cv2.COLOR_RGB2BGR))
-
-    # Save output JSON
     output_data = [result.to_dict() for result in results]
     with open(args.output_json, "w") as f:
         json.dump(output_data, f, indent=4)
-
-    # Save result images
-    for result in results:
-        output_image_path = args.topdown_dir / Path(result.image_path).name
-        cv2.imwrite(str(output_image_path), cv2.cvtColor(result.top_down_img, cv2.COLOR_RGB2BGR))
 
 
 if __name__ == "__main__":
