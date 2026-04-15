@@ -53,18 +53,21 @@ class ImageResult:
         }
 
 
-@dataclass(frozen=True)
-class BallDetectConfig:
-    max_balls: int = 16
-
-
-def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]]:
+def get_upper_lower_blue(hsv_image, hue_window: float) -> tuple[np.ndarray, np.ndarray, tuple[int, int, int, int]]:
     h, w = hsv_image.shape[:2]
 
     x0 = int(w * 0.3)
     x1 = int(w * 0.7)
     y0 = int(h * 0.3)
     y1 = int(h * 0.7)
+    
+    # hsv_image_copy = hsv_image.copy()
+    # cv2.rectangle(hsv_image_copy, (x0, y0), (x1, y1), (255, 0, 0), 2)
+    # plt.figure(figsize=(12, 8))
+    # plt.imshow(cv2.cvtColor(hsv_image_copy, cv2.COLOR_HSV2RGB))
+    # plt.axis('off')
+    # plt.title('Region of Interest for Color Analysis')
+    # plt.show()
 
     roi_hsv = hsv_image[y0:y1, x0:x1]
 
@@ -80,23 +83,42 @@ def get_upper_lower_blue(hsv_image, hue_window: float = 1.5) -> tuple[np.ndarray
 
     near_hue = valid & (np.abs(H.astype(np.int16) - int(dominant_hue)) <= hue_window)
 
-    s_low = int(np.percentile(S[near_hue], 10))
-    s_high = int(np.percentile(S[near_hue], 95))
+    s_list = np.bincount(S[near_hue].ravel(), minlength=256)
+    v_list = np.bincount(V[near_hue].ravel(), minlength=256)
+    s_dominant = np.argmax(s_list)
+    v_dominant = np.argmax(v_list)
 
-    v_low = int(np.percentile(V[near_hue], 5))
-    v_high = int(np.percentile(V[near_hue], 95))
+    # s_low  = int(np.percentile(S[near_hue], 10))    # ignores the lowest 10% of pixels
+    # s_high = int(np.percentile(S[near_hue], 95))
+
+    # v_low  = int(np.percentile(V[near_hue], 15))
+    # v_high = int(np.percentile(V[near_hue], 95))
 
     lower_blue = np.array([
         max(0, dominant_hue - hue_window),
-        max(0, s_low - 60),
-        max(0, v_low - 60)
+        max(s_dominant - 60, 0),
+        max(v_dominant - 60, 0)
     ], dtype=np.uint8)
 
     upper_blue = np.array([
         min(179, dominant_hue + hue_window),
-        min(255, s_high + 10),
-        min(255, v_high + 10)
+        min(s_dominant + 10, 255),
+        min(v_dominant + 10, 255)
     ], dtype=np.uint8)
+
+    # plt.figure(figsize=(12, 5))
+    # plt.subplot(1, 2, 1)
+    # plt.hist(S[near_hue].ravel(), bins=50, color='green', alpha=0.7)
+    # plt.axvline(lower_blue[1], color='red', linestyle='dashed', linewidth=2)
+    # plt.axvline(upper_blue[1], color='red', linestyle='dashed', linewidth=2)
+    # plt.title('Saturation Histogram of Near-Hue Pixels')
+    # plt.subplot(1, 2, 2)
+    # plt.hist(V[near_hue].ravel(), bins=50, color='blue', alpha=0.7)
+    # plt.axvline(lower_blue[2], color='red', linestyle='dashed', linewidth=2)
+    # plt.axvline(upper_blue[2], color='red', linestyle='dashed', linewidth=2)
+    # plt.title('Value Histogram of Near-Hue Pixels')
+    # plt.tight_layout()
+    # plt.show()
 
     return lower_blue, upper_blue, (x0, y0, x1, y1)
 
@@ -268,7 +290,7 @@ def get_dist_center(rho, theta, center):
     return cx * math.cos(theta) + cy * math.sin(theta) - rho
 
 
-def select_4_groups_from_largest_3(inner_lines, outer_lines, h, w):
+def select_4_groups_old(inner_lines, outer_lines, h, w):
     inner_keys = list(inner_lines.keys())
     outer_keys = list(outer_lines.keys())
 
@@ -292,6 +314,140 @@ def select_4_groups_from_largest_3(inner_lines, outer_lines, h, w):
             return candidate_inner, candidate_outer
 
     return None, None
+
+
+def select_4_groups_not_work(inner_lines, outer_lines, h, w):
+    print(f"Trying to select 4 groups from {len(inner_lines)} inner lines and {len(outer_lines)} outer lines")
+    
+    parallelism_inner = {}
+    for (i, (line_i, rho_i, theta_i)), (j, (line_j, rho_j, theta_j)) in itertools.combinations(inner_lines.items(), 2):
+        diff = get_diff_pi(theta_i, theta_j)
+        parallelism_inner[(i, j)] = diff
+    parallelism_outer = {}
+    for (i, (line_i, rho_i, theta_i)), (j, (line_j, rho_j, theta_j)) in itertools.combinations(outer_lines.items(), 2):
+        diff = get_diff_pi(theta_i, theta_j)
+        parallelism_outer[(i, j)] = diff
+
+    parallelism_inner = sorted(parallelism_inner.items(), key=lambda x: x[1])
+    parallelism_outer = sorted(parallelism_outer.items(), key=lambda x: x[1])
+
+    (i, j), _ = parallelism_inner[0]
+    next_parallel_inner = None
+    for idx in range(1, len(parallelism_inner)):
+        (i2, j2), _ = parallelism_inner[idx]
+        if i2 in (i, j) or j2 in (i, j):
+            continue
+        next_parallel_inner = idx
+        break
+
+    (i, j), _ = parallelism_outer[0]
+    next_parallel_outer = None
+    for idx in range(1, len(parallelism_outer)):
+        (i2, j2), _ = parallelism_outer[idx]
+        if i2 in (i, j) or j2 in (i, j):
+            continue
+        next_parallel_outer = idx
+        break
+
+    result_inner = {}
+    result_outer = {}
+    for (i, j), diff in [parallelism_inner[0], parallelism_inner[next_parallel_inner]]:
+        result_inner[i] = inner_lines[i]
+        result_inner[j] = inner_lines[j]
+    for (i, j), diff in [parallelism_outer[0], parallelism_outer[next_parallel_outer]]:
+        result_outer[i] = outer_lines[i]
+        result_outer[j] = outer_lines[j]
+
+    return result_inner, result_outer
+
+
+def rectangle_score(points, h, w, image):
+    points = np.asarray(points, dtype=np.float32)
+    points = order_points_clockwise(points)
+
+    edges = np.roll(points, -1, axis=0) - points
+    side_lengths = np.linalg.norm(edges, axis=1)
+
+    # print(f"Side lengths: {side_lengths}")
+
+    if np.any(side_lengths < 10):
+        return None
+    
+    x = points[:, 0]
+    y = points[:, 1]
+    area = 0.5 * abs(np.dot(x, np.roll(y, -1)) - np.dot(y, np.roll(x, -1)))
+
+    # print(f"Area: {area}")
+
+    if area < 500_000:
+        return None
+    
+    s0, s1, s2, s3 = side_lengths
+    opp_sim_1 = min(s0, s2) / max(s0, s2)
+    opp_sim_2 = min(s1, s3) / max(s1, s3)
+
+    # print(f"Opposite side similarities: {opp_sim_1:.4f}, {opp_sim_2:.4f}")
+    return opp_sim_1 + opp_sim_2
+
+    poly = np.round(points).astype(np.int32)
+
+    region_mask = np.zeros((h, w), dtype=np.uint8)
+    cv2.fillConvexPoly(region_mask, poly, 255)
+
+
+    mask_table = image.copy()
+    inside_pixels = mask_table[region_mask == 255]
+    if len(inside_pixels) == 0:
+        return None
+
+    white_pixels = np.count_nonzero(inside_pixels == 255)
+    total_pixels = len(inside_pixels)
+
+    white_ratio = white_pixels / total_pixels
+
+    print(f"White pixels inside: {white_pixels}")
+    print(f"White ratio: {white_ratio:.4f}")
+
+    if white_ratio < 0.8:
+        return None
+
+    # Final score
+    score = opp_sim_1 + opp_sim_2 + white_ratio
+    return score
+
+def order_points_clockwise(points):
+    points = np.asarray(points, dtype=np.float32)
+    center = np.mean(points, axis=0)
+    angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
+    order = np.argsort(angles)
+    return points[order]
+
+def select_best_4_line_combo(lines, image):
+    h, w = image.shape[:2]
+    keys = list(lines.keys())
+    best_lines = None
+    best_points = None
+    best_score = -np.inf
+
+    for combo in itertools.combinations(keys, 4):
+        candidate = {k: lines[k] for k in combo}
+
+        points = get_intersections(candidate, h, w)
+        if len(points) != 4:
+            continue
+
+        score = rectangle_score(points, h, w, image)
+        if score is None:
+            continue
+
+        # print(f"combo={combo}, score={score:.4f}")
+
+        if score > best_score:
+            best_score = score
+            best_lines = candidate
+            best_points = points
+
+    return best_lines, best_points, best_score
 
 
 def line_intersection_infinite(l1, l2, eps=1e-9):
@@ -323,6 +479,54 @@ def get_intersections(lines, h, w):
         x, y = p
 
         if -250 <= x <= (w - 1) + 250 and -250 <= y <= (h - 1) + 250:
+            raw_points.append((x, y))
+
+    intersection_points = np.array(list(raw_points), dtype=np.float32)
+    return intersection_points
+
+
+def order_inner_outer_lines(inner_lines, outer_lines, center):
+    inner_lines_keys = np.array(list(inner_lines.keys()))
+    outer_lines_keys = np.array(list(outer_lines.keys()))
+    centers_inner = []
+    centers_outer = []
+    for i in inner_lines.values():
+        x1, y1, x2, y2 = i[0][0]
+        centers_inner.append([(x1 + x2) / 2, (y1 + y2) / 2])
+    for i in outer_lines.values():
+        x1, y1, x2, y2 = i[0][0]
+        centers_outer.append([(x1 + x2) / 2, (y1 + y2) / 2])
+    centers_inner = np.array(centers_inner)
+    centers_outer = np.array(centers_outer)
+
+    center_pts = np.mean(centers_inner, axis=0)
+    angles = np.arctan2(centers_inner[:, 1] - center_pts[1], centers_inner[:, 0] - center_pts[0])
+    order = np.argsort(angles)
+
+    inner_lines_ordered = {inner_lines_keys[i]: inner_lines[inner_lines_keys[i]] for i in order}
+    outer_lines_ordered = {outer_lines_keys[i]: outer_lines[outer_lines_keys[i]] for i in order}
+    
+    return inner_lines_ordered, outer_lines_ordered, angles, order
+
+
+def get_intersections_ordered(lines, h, w):
+    """
+    lines are ordered by clockwise angle around the center
+    """
+    if isinstance(lines, dict):
+        line_segments = [seg[0] for seg in lines.values()]
+    else:
+        line_segments = [seg[0] for seg in lines]
+
+    raw_points = []
+    for l1, l2 in zip(line_segments, line_segments[1:] + line_segments[:1]):
+        p = line_intersection_infinite(l1, l2)
+        if p is None:
+            continue
+        x, y = p
+
+        pad = 250
+        if -pad <= x <= (w - 1) + pad and -pad <= y <= (h - 1) + pad:
             raw_points.append((x, y))
 
     intersection_points = np.array(list(raw_points), dtype=np.float32)
@@ -462,6 +666,17 @@ def find_dot(image, lower_blue, upper_blue):
 
     hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
 
+    lower_blue = np.array([
+        lower_blue[0],
+        lower_blue[1],
+        lower_blue[2] + 30
+    ])
+    upper_blue = np.array([
+        upper_blue[0],
+        upper_blue[1],
+        upper_blue[2]
+    ])
+
     blue_mask = cv2.inRange(hsv, lower_blue, upper_blue)
     blue_ratio = np.count_nonzero(blue_mask) / patch_area
 
@@ -514,7 +729,7 @@ def find_dot(image, lower_blue, upper_blue):
     return has_dot, has_boll, is_empty, debug_img, candidates_info, result_countours
 
 
-def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfig) -> ImageResult:
+def process_image(full_img_path: Path, image_path: Path) -> ImageResult:
     print(f"Processing image: {image_path}")
     image = cv2.imread(str(full_img_path))
     scale_factor = 3360 / image.shape[1]
@@ -542,35 +757,35 @@ def process_image(full_img_path: Path, image_path: Path, config: BallDetectConfi
     center = [((x1 + x2) // 2, (y1 + y2) // 2) for (x1, y1, x2, y2) in edge_points]
     center = np.mean(center, axis=0).astype(int)
 
-    inner_lines, outer_lines = get_inner_outer_lines(lines, center, image)
+    inner_lines, outer_lines = get_inner_outer_lines(lines, center, image, angle_threshold=0.07, distance_threshold=80)
 
     if len(outer_lines) < 4 or len(inner_lines) < 4:
         print("[DEBUG] Not enough lines found, retrying with wider hue window.")
         lower_blue, upper_blue, _ = get_upper_lower_blue(hsv_image, hue_window=5)
         mask_table = cv2.inRange(hsv_image, lower_blue, upper_blue)
         lines = get_lines(mask_table, min_length=250)
-        inner_lines, outer_lines = get_inner_outer_lines(lines, center, image)
+        inner_lines, outer_lines = get_inner_outer_lines(lines, center, image, angle_threshold=0.07, distance_threshold=80)
 
     if len(outer_lines) > 4 or len(inner_lines) > 4:
-        selected_inner, selected_outer = select_4_groups_from_largest_3(
-            inner_lines, outer_lines, image.shape[0], image.shape[1]
-        )
+        selected_inner = select_best_4_line_combo(inner_lines, mask_table)[0]
+        selected_outer = select_best_4_line_combo(outer_lines, mask_table)[0]
 
         if selected_inner is not None and selected_outer is not None:
             inner_lines = selected_inner
             outer_lines = selected_outer
 
-    intersection_points_outer = get_intersections(outer_lines, image.shape[0], image.shape[1])
-    intersection_points_inner = get_intersections(inner_lines, image.shape[0], image.shape[1])
+    inner_lines, outer_lines, _, _ = order_inner_outer_lines(inner_lines, outer_lines, center)
+
+    intersection_points_outer = get_intersections_ordered(outer_lines, image.shape[0], image.shape[1])
+    intersection_points_inner = get_intersections_ordered(inner_lines, image.shape[0], image.shape[1])
 
     if len(intersection_points_outer) != 4:
-        intersection_points_outer = sorted(intersection_points_outer, key=lambda p: math.sqrt(
-            (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+        intersection_points_outer = sorted(intersection_points_outer, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
         intersection_points_outer = np.array(intersection_points_outer[:4], dtype=np.float32)
     if len(intersection_points_inner) != 4:
-        intersection_points_inner = sorted(intersection_points_inner, key=lambda p: math.sqrt(
-            (p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+        intersection_points_inner = sorted(intersection_points_inner, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
         intersection_points_inner = np.array(intersection_points_inner[:4], dtype=np.float32)
+
 
     if len(intersection_points_outer) > 4 or len(intersection_points_inner) > 4:
         print("[DEBUG] Too many intersection points found.")
@@ -683,7 +898,7 @@ def main() -> int:
     for img_path in image_paths:
         full_img_path = args.data_dir / Path(img_path)
         try:
-            image_result = process_image(full_img_path, img_path, BallDetectConfig())
+            image_result = process_image(full_img_path, img_path)
 
             output_image_path = args.topdown_dir / Path(image_result.image_path).name
             cv2.imwrite(str(output_image_path), cv2.cvtColor(image_result.top_down_img, cv2.COLOR_RGB2BGR))
@@ -691,7 +906,7 @@ def main() -> int:
             image_result.top_down_img = None
             results.append(image_result)
         except Exception as e:
-            print(f"Error processing {img_path}:\n{e}")
+            print(f"Error processing {img_path}:\n{e}", "="*40)
             continue
 
     output_data = [result.to_dict() for result in results]
