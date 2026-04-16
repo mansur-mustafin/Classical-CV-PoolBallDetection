@@ -1338,18 +1338,50 @@ class BallsDetector:
         hull = cv2.convexHull(pts)
 
         #Get lines, edges, corners points, and view angle
+        
         lines = TableTopViewProcessor.get_lines(mask_table, min_length=250)
         edge_points = [line[0] for line in lines]
         center = [((x1 + x2) // 2, (y1 + y2) // 2) for (x1, y1, x2, y2) in edge_points]
         center = np.mean(center, axis=0).astype(int)
 
         inner_lines, outer_lines = TableTopViewProcessor.get_inner_outer_lines(lines, center, angle_threshold=0.07, distance_threshold=80)
-        intersection_points_outer = TableTopViewProcessor.get_intersections(outer_lines, image.shape[0], image.shape[1])
-        intersection_points_inner = TableTopViewProcessor.get_intersections(inner_lines, image.shape[0], image.shape[1])
 
-        pts_ordered_outer, pts_ordered_inner, angles, order = TableTopViewProcessor.order_points_by_angle(intersection_points_outer, intersection_points_inner)
-        self.is_top, self.is_front, self.is_angle, _ = TableTopViewProcessor.got_angle(pts_ordered_outer)
+        if len(outer_lines) > 4 or len(inner_lines) > 4:
+            selected_inner = TableTopViewProcessor.select_4_groups_v3(inner_lines, mask_table)[0]
+            selected_outer = TableTopViewProcessor.select_4_groups_v3(outer_lines, mask_table)[0]
 
+            if selected_inner is not None and selected_outer is not None:
+                inner_lines = selected_inner
+                outer_lines = selected_outer
+
+
+        inner_lines, outer_lines, _, _ = TableTopViewProcessor.order_inner_outer_lines(inner_lines, outer_lines, center)
+
+        intersection_points_outer = TableTopViewProcessor.get_intersections_ordered(outer_lines, image.shape[0], image.shape[1])
+        intersection_points_inner = TableTopViewProcessor.get_intersections_ordered(inner_lines, image.shape[0], image.shape[1])
+
+
+        if len(intersection_points_outer) != 4:
+            intersection_points_outer = sorted(
+                intersection_points_outer, 
+                key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2)
+            )
+            intersection_points_outer = np.array(intersection_points_outer[:4], dtype=np.float32)
+        if len(intersection_points_inner) != 4:
+            intersection_points_inner = sorted(
+                intersection_points_inner, 
+                key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2)
+            )
+            intersection_points_inner = np.array(intersection_points_inner[:4], dtype=np.float32)
+
+
+        if len(intersection_points_outer) > 4 or len(intersection_points_inner) > 4:
+            print("[DEBUG] Too many intersection points found.")
+
+        pts_ordered_outer, pts_ordered_inner, angles, order = TableTopViewProcessor.order_points_by_angle(
+            intersection_points_outer, intersection_points_inner)
+
+        self.is_top, self.is_front, self.is_angle, (t1, t2, b1, b2) = TableTopViewProcessor.got_angle(pts_ordered_outer)
        # print(f"Is top view: {self.is_top}, Is front view: {self.is_front}, Is angle view: {self.is_angle}")
        # for i, pt in enumerate(pts_ordered_outer):
             #print(f"Outer Point {i}: {pt}, Angle: {angles[i]:.2f} degrees")
@@ -1408,8 +1440,8 @@ class BallsDetector:
         if dist_to_state < dist_to_dark:
             h_tol = 6
             s_tol_up = 10
-            s_tol_down = 40
-            v_tol_up = 50
+            s_tol_down = 45
+            v_tol_up = 60
             v_tol_down = 80
 
             lower_blue = np.array([self.h_med - h_tol, self.s_med - s_tol_down, self.v_med - v_tol_down])
@@ -1468,7 +1500,7 @@ class BallsDetector:
                 minDist=15, 
                 param1=40,
                 param2=20,
-                minRadius=18,
+                minRadius=19,
                 maxRadius=52
             )    
         else:                      #PARAMETERS FOR FRONT VIEW
@@ -1494,8 +1526,7 @@ class BallsDetector:
                 A, B, C = self.side_line_r_inner_full
                 perp_distance = abs(A * cx + B * cy + C) / np.sqrt(A**2 + B**2)
                 is_above = BallsDetector.is_above_line((cx, cy), self.side_line_r_inner_full)
-                
-                if is_above and perp_distance > padding_area:
+                if (not self.is_top) and is_above and perp_distance > padding_area:
                     continue          
                 valid_circles.append((cx, cy, r))
             
