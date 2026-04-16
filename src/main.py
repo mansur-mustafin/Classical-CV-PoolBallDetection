@@ -287,7 +287,7 @@ class TableTopViewProcessor:
         return inner_lines, outer_lines
 
     @staticmethod
-    def select_4_groups_old(inner_lines, outer_lines, h, w):
+    def select_4_groups_v1(inner_lines, outer_lines, h, w):
         inner_keys = list(inner_lines.keys())
         outer_keys = list(outer_lines.keys())
 
@@ -313,7 +313,7 @@ class TableTopViewProcessor:
         return None, None
 
     @staticmethod
-    def select_4_groups_not_work(inner_lines, outer_lines, h, w):
+    def select_4_groups_v2(inner_lines, outer_lines, h, w):
         print(f"Trying to select 4 groups from {len(inner_lines)} inner lines and {len(outer_lines)} outer lines")
         
         parallelism_inner = {}
@@ -421,7 +421,7 @@ class TableTopViewProcessor:
         return points[order]
 
     @staticmethod
-    def select_best_4_line_combo(lines, image):
+    def select_4_groups_v3(lines, image):
         h, w = image.shape[:2]
         keys = list(lines.keys())
         best_lines = None
@@ -764,8 +764,8 @@ class TableTopViewProcessor:
             inner_lines, outer_lines = TableTopViewProcessor.get_inner_outer_lines(lines, center, angle_threshold=0.07, distance_threshold=80)
 
         if len(outer_lines) > 4 or len(inner_lines) > 4:
-            selected_inner = TableTopViewProcessor.select_best_4_line_combo(inner_lines, mask_table)[0]
-            selected_outer = TableTopViewProcessor.select_best_4_line_combo(outer_lines, mask_table)[0]
+            selected_inner = TableTopViewProcessor.select_4_groups_v3(inner_lines, mask_table)[0]
+            selected_outer = TableTopViewProcessor.select_4_groups_v3(outer_lines, mask_table)[0]
 
             if selected_inner is not None and selected_outer is not None:
                 inner_lines = selected_inner
@@ -777,10 +777,16 @@ class TableTopViewProcessor:
         intersection_points_inner = TableTopViewProcessor.get_intersections_ordered(inner_lines, image.shape[0], image.shape[1])
 
         if len(intersection_points_outer) != 4:
-            intersection_points_outer = sorted(intersection_points_outer, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+            intersection_points_outer = sorted(
+                intersection_points_outer, 
+                key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2)
+            )
             intersection_points_outer = np.array(intersection_points_outer[:4], dtype=np.float32)
         if len(intersection_points_inner) != 4:
-            intersection_points_inner = sorted(intersection_points_inner, key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2))
+            intersection_points_inner = sorted(
+                intersection_points_inner, 
+                key=lambda p: math.sqrt((p[0] - center[0]) ** 2 + (p[1] - center[1]) ** 2)
+            )
             intersection_points_inner = np.array(intersection_points_inner[:4], dtype=np.float32)
 
 
@@ -801,8 +807,12 @@ class TableTopViewProcessor:
 
         start_by_angle = np.where((pts_ordered_outer == start_point).all(axis=1))[0][0]
 
-        img_warped = TableTopViewProcessor.warp_table_variant(image, pts_ordered_inner, pad=0, w=2000, h=2000,
-                                                              inner_color=(74, 158, 229), pad_color=(85, 90, 85))[0]
+        img_warped = TableTopViewProcessor.warp_table_variant(
+            image, 
+            pts_ordered_inner, 
+            pad=0, w=2000, h=2000,
+            inner_color=(74, 158, 229), pad_color=(85, 90, 85)
+        )[0]
 
         w, h = img_warped.shape[1], img_warped.shape[0]
         pad = 80
@@ -1632,11 +1642,7 @@ def main() -> int:
             futures = [
                 executor.submit(
                     process_image,
-                    i,
-                    total,
-                    img_path,
-                    args.data_dir,
-                    args.topdown_dir,
+                    i, total, img_path, args.data_dir, args.topdown_dir
                 )
                 for i, img_path in enumerate(image_paths)
             ]
@@ -1656,4 +1662,7 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt as e:
+        print("Process interrupted by user.")
