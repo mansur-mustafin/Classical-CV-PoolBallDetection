@@ -1,4 +1,5 @@
 import argparse
+from email.mime import image
 import itertools
 import json
 import math
@@ -1014,7 +1015,7 @@ class BallsDetector:
         black_ratio = np.sum(is_black) / len(rgb_pixels)
 
 
-        print(f"Ball at ({cx}, {cy}) | White Ratio: {white_ratio:.4f} | Black Ratio: {black_ratio:.4f}")
+       # print(f"Ball at ({cx}, {cy}) | White Ratio: {white_ratio:.4f} | Black Ratio: {black_ratio:.4f}")
 
         if white_ratio > 0.75:
             return 0
@@ -1027,9 +1028,9 @@ class BallsDetector:
             mean_rgb = np.mean(rgb_pixels, axis=0)
             median_rgb = np.median(rgb_pixels, axis=0)
 
-            print(f"Ball at ({cx}, {cy})")
-            print(f"  -> MEAN sees:   {mean_rgb}")
-            print(f"  -> MEDIAN sees: {median_rgb}")
+         #   print(f"Ball at ({cx}, {cy})")
+         #   print(f"  -> MEAN sees:   {mean_rgb}")
+         #   print(f"  -> MEDIAN sees: {median_rgb}")
         #  print(f"Ball at ({cx}, {cy}) actual median RGB is: {median_rgb}")
             for color_name, ref_color in BallsDetector.REFERENCE_COLORS.items():
                 if color_name in ["White", "Black"]:
@@ -1124,7 +1125,7 @@ class BallsDetector:
         final_side_mask = np.zeros((height, width), dtype=bool)
 
         if self.is_angle_l:
-            print("Table is leaning left.")
+         #   print("Table is leaning left.")
             A_out, B_out, C_out = self.side_line_r_outer_full
             A_in, B_in, C_in = self.side_line_r_inner_full
 
@@ -1135,7 +1136,7 @@ class BallsDetector:
             final_side_mask = mask_side_combined_flat.reshape(height, width)
 
         elif self.is_angle_r:
-            print("Table is leaning right.")
+         #   print("Table is leaning right.")
             A_out, B_out, C_out = self.side_line_l_outer_full
             A_in, B_in, C_in = self.side_line_l_inner_full
 
@@ -1193,7 +1194,7 @@ class BallsDetector:
         # Circle Masks
         # Calculate circle radius based on distances between inner and outer points, with some padding
         radius_tl = int(distance_tl/2) +25
-        radius_tr = int(distance_tr/2) + 30
+        radius_tr = int(distance_tr/2) + 12
 
         # Create boolean masks for points inside the top-left and top-right circles
         mask_circle_tl_flat = (coords[:, 0] - tl[0])**2 + (coords[:, 1] - tl[1])**2 <= radius_tl**2
@@ -1247,10 +1248,20 @@ class BallsDetector:
         return self.hsv_image_shadow_masked
     
     def get_image_result(self) -> ImageResult:
-        image = cv2.imread(self.full_img_path)
-        self.image_h, self.image_w = image.shape[:2]
+        #image = cv2.imread(self.full_img_path)
+        #image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        #self.hsv_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+
+        image = cv2.imread(str(self.full_img_path))
+    
+        scale_factor = 3360 / image.shape[1]
+        new_dimensions = (3360, int(image.shape[0] * scale_factor))
+        image = cv2.resize(image, new_dimensions, interpolation=cv2.INTER_AREA)
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+
         self.hsv_image = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+        self.image_h, self.image_w = image.shape[:2]
+
 
         #Values for second mask
         self.h_med = 103.2
@@ -1276,7 +1287,7 @@ class BallsDetector:
 
         h_freq, s_freq, v_freq = BallsDetector.get_center_mode_hsv(self.hsv_image, area_ratio=0.20)
 
-        print(f"Most frequent HSV in the center 20%: H={h_freq}, S={s_freq}, V={v_freq}")
+       # print(f"Most frequent HSV in the center 20%: H={h_freq}, S={s_freq}, V={v_freq}")
 
         lower_blue = np.array([h_freq - h_tol, s_freq- s_tol, v_freq - v_tol_down])
         upper_blue = np.array([h_freq + h_tol, s_freq + s_tol, v_freq + v_tol_up])
@@ -1322,16 +1333,16 @@ class BallsDetector:
         center = [((x1 + x2) // 2, (y1 + y2) // 2) for (x1, y1, x2, y2) in edge_points]
         center = np.mean(center, axis=0).astype(int)
 
-        inner_lines, outer_lines = TableTopViewProcessor.get_inner_outer_lines(lines, center)
+        inner_lines, outer_lines = TableTopViewProcessor.get_inner_outer_lines(lines, center, angle_threshold=0.07, distance_threshold=80)
         intersection_points_outer = TableTopViewProcessor.get_intersections(outer_lines, image.shape[0], image.shape[1])
         intersection_points_inner = TableTopViewProcessor.get_intersections(inner_lines, image.shape[0], image.shape[1])
 
         pts_ordered_outer, pts_ordered_inner, angles, order = TableTopViewProcessor.order_points_by_angle(intersection_points_outer, intersection_points_inner)
         self.is_top, self.is_front, self.is_angle, _ = TableTopViewProcessor.got_angle(pts_ordered_outer)
 
-        print(f"Is top view: {self.is_top}, Is front view: {self.is_front}, Is angle view: {self.is_angle}")
-        for i, pt in enumerate(pts_ordered_outer):
-            print(f"Outer Point {i}: {pt}, Angle: {angles[i]:.2f} degrees")
+       # print(f"Is top view: {self.is_top}, Is front view: {self.is_front}, Is angle view: {self.is_angle}")
+       # for i, pt in enumerate(pts_ordered_outer):
+            #print(f"Outer Point {i}: {pt}, Angle: {angles[i]:.2f} degrees")
 
         self.tl_inner = pts_ordered_inner[0]
         self.tr_inner = pts_ordered_inner[1]
@@ -1437,7 +1448,7 @@ class BallsDetector:
                 param1=40,
                 param2=17.4,
                 minRadius=17,
-                maxRadius=40
+                maxRadius=48
             )
         elif(self.is_top):        #PARAMETERS FOR TOP VIEW
             circles = cv2.HoughCircles(
@@ -1447,7 +1458,7 @@ class BallsDetector:
                 minDist=15, 
                 param1=40,
                 param2=20,
-                minRadius=16,
+                minRadius=18,
                 maxRadius=52
             )    
         else:                      #PARAMETERS FOR FRONT VIEW
@@ -1518,9 +1529,9 @@ class BallsDetector:
 
             final_count = len(valid_circles) - len(indices_to_drop)
             
-            print(f"Total valid balls drawn on screen: {len(valid_circles)}")
-            print(f"Balls flagged as overlaps: {len(overlapping_indices)}")
-            print(f"--> FINAL BALL COUNT (smaller overlaps removed): {final_count}")
+           # print(f"Total valid balls drawn on screen: {len(valid_circles)}")
+           # print(f"Balls flagged as overlaps: {len(overlapping_indices)}")
+           # print(f"--> FINAL BALL COUNT (smaller overlaps removed): {final_count}")
         else:
             print("No circles found")
 
