@@ -2,3 +2,28 @@
 \label{sec:methods}
 
 \subsection{Table Localization and Perspective Rectification}
+
+The objective is to convert an image of a pool table into a normalized top-view representation. In addition to removing projective distortion, the method also rotates the rectified table so that the center spot is placed on the right-hand side of the final image. The overall processing pipeline is illustrated in Figure~\ref{fig:topview-pipeline}.
+
+The processing pipeline begins with image normalization. The input image is resized to a fixed width in order to reduce scale variability. A Gaussian blur is then applied before color analysis.
+
+Table localization is performed in the HSV color space using an adaptive estimate of the cloth color. Instead of applying a fixed threshold, the method analyzes a central region of the image, where the table surface is expected to dominate. After excluding pixels with low saturation and low value, the dominant hue is estimated from the corresponding histogram. Dominant saturation and value levels are then determined around this hue.
+
+After thresholding, the resulting binary mask is refined with morphological opening and closing to remove isolated noise and fill small gaps. Because the scene may contain other objects with similar colors, only contours that are spatially close to the largest table-colored region are retained. This step preserves the full table area while discarding unrelated background regions.
+
+The table boundaries are recovered from the cleaned mask through edge detection followed by a probabilistic Hough transform. Only sufficiently long line segments are kept, since short segments are more likely to correspond to noise. Each detected segment is then converted into Hesse normal form, which provides a convenient representation for comparing orientation and distance from the table center. Lines with similar orientation and nearby offsets are grouped together, and within each group the line farther from the center is interpreted as an outer cushion boundary while the closer one is treated as an inner playing-surface boundary.
+
+In challenging cases, more than four candidate line groups may be produced. To obtain a single rectangular hypothesis, combinations of four lines are evaluated by intersecting them and scoring the resulting quadrilateral. The score favors large shapes whose opposite sides have similar lengths, which is consistent with the expected geometry of a billiard table. If the initial color thresholding yields too few valid lines, the hue interval is relaxed and the detection stage is repeated.
+
+Once the four relevant boundaries are selected, the lines are ordered clockwise around the estimated table center and their intersections are used to define the table corners. Two perspective rectifications are then performed. First, the inner boundary is warped to a square reference image, which provides a convenient intermediate view for orientation analysis. Second, after the correct orientation has been determined, the outer boundary is warped to the final rectangular top-view image.
+
+From the initial square warp, four small patches are sampled at the right, bottom, left, and top sides of the table. Each patch is examined for non-cloth regions using the previously estimated table color. After morphological cleanup, contour size and contact with the patch border are used to distinguish small cue-position markers from larger regions caused by a ball. The preferred orientation is chosen according to the strongest available cue: a detected marker alone is preferred, followed by a marker accompanied by a ball, and finally by the largest ball-like region. If none of these visual cues is sufficiently reliable, a fallback rule based on the coarse viewpoint geometry of the detected quadrilateral is used.
+
+During perspective warping, some transformed coordinates may fall outside the source image. For this reason, the final top-view includes a small padding margin around the table.
+
+\begin{figure*}[t]
+    \centering
+    \includegraphics[width=0.95\linewidth]{img/top_view_pipeline.png}
+    \caption{Pipeline for table localization, perspective rectification, and orientation normalization.}
+    \label{fig:topview-pipeline}
+\end{figure*}
