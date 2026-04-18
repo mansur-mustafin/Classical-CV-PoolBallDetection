@@ -1,5 +1,4 @@
 import argparse
-from email.mime import image
 import itertools
 import json
 import math
@@ -14,6 +13,8 @@ from scipy.optimize import linear_sum_assignment
 
 import cv2
 import numpy as np
+from cv2 import Mat
+from numpy import ndarray, dtype, generic, integer, floating
 
 
 @dataclass(frozen=True)
@@ -176,7 +177,7 @@ class TableTopViewProcessor:
 
         rho = x1 * math.cos(theta) + y1 * math.sin(theta)
 
-        return (rho, theta)
+        return rho, theta
 
     @staticmethod
     def get_diff_pi(a: float, b: float) -> float:
@@ -218,7 +219,7 @@ class TableTopViewProcessor:
                     continue
 
                 if not any(i in g for g in groups) and not any(j in g for g in groups):
-                    groups.append(set([i, j]))
+                    groups.append({i, j})
                 elif any(i in g for g in groups):
                     for group in groups:
                         if i in group:
@@ -246,7 +247,7 @@ class TableTopViewProcessor:
 
         for i in range(len(segments)):
             if not any(i in group for group in groups):
-                groups.append(set([i]))
+                groups.append({i})
 
         # merge groups with overlap elements
         changed = True
@@ -255,13 +256,11 @@ class TableTopViewProcessor:
             new_groups = []
             while groups:
                 first = groups.pop(0)
-                merged_any = False
                 i = 0
                 while i < len(groups):
                     if not first.isdisjoint(groups[i]):
                         first.update(groups.pop(i))
                         changed = True
-                        merged_any = True
                     else:
                         i += 1
                 new_groups.append(first)
@@ -318,11 +317,11 @@ class TableTopViewProcessor:
         print(f"Trying to select 4 groups from {len(inner_lines)} inner lines and {len(outer_lines)} outer lines")
         
         parallelism_inner = {}
-        for (i, (line_i, rho_i, theta_i)), (j, (line_j, rho_j, theta_j)) in itertools.combinations(inner_lines.items(), 2):
+        for (i, (_, _, theta_i)), (j, (_, _, theta_j)) in itertools.combinations(inner_lines.items(), 2):
             diff = TableTopViewProcessor.get_diff_pi(theta_i, theta_j)
             parallelism_inner[(i, j)] = diff
         parallelism_outer = {}
-        for (i, (line_i, rho_i, theta_i)), (j, (line_j, rho_j, theta_j)) in itertools.combinations(outer_lines.items(), 2):
+        for (i, (_, _, theta_i)), (j, (_, _, theta_j)) in itertools.combinations(outer_lines.items(), 2):
             diff = TableTopViewProcessor.get_diff_pi(theta_i, theta_j)
             parallelism_outer[(i, j)] = diff
 
@@ -392,16 +391,14 @@ class TableTopViewProcessor:
         region_mask = np.zeros((h, w), dtype=np.uint8)
         cv2.fillConvexPoly(region_mask, poly, 255)
 
-
         mask_table = image.copy()
         inside_pixels = mask_table[region_mask == 255]
         if len(inside_pixels) == 0:
             return None
 
         white_pixels = np.count_nonzero(inside_pixels == 255)
-        total_pixels = len(inside_pixels)
 
-        white_ratio = white_pixels / total_pixels
+        white_ratio = white_pixels / area
 
         print(f"White pixels inside: {white_pixels}")
         print(f"White ratio: {white_ratio:.4f}")
@@ -409,9 +406,7 @@ class TableTopViewProcessor:
         if white_ratio < 0.8:
             return None
 
-        # Final score
-        score = opp_sim_1 + opp_sim_2 + white_ratio
-        return score
+        return opp_sim_1 + opp_sim_2 + white_ratio
 
     @staticmethod
     def order_points_clockwise(points):
@@ -489,15 +484,10 @@ class TableTopViewProcessor:
         inner_lines_keys = np.array(list(inner_lines.keys()))
         outer_lines_keys = np.array(list(outer_lines.keys()))
         centers_inner = []
-        centers_outer = []
         for i in inner_lines.values():
             x1, y1, x2, y2 = i[0][0]
             centers_inner.append([(x1 + x2) / 2, (y1 + y2) / 2])
-        for i in outer_lines.values():
-            x1, y1, x2, y2 = i[0][0]
-            centers_outer.append([(x1 + x2) / 2, (y1 + y2) / 2])
         centers_inner = np.array(centers_inner)
-        centers_outer = np.array(centers_outer)
 
         center_pts = np.mean(centers_inner, axis=0)
         angles = np.arctan2(centers_inner[:, 1] - center_pts[1], centers_inner[:, 0] - center_pts[0])
@@ -505,7 +495,7 @@ class TableTopViewProcessor:
 
         inner_lines_ordered = {inner_lines_keys[i]: inner_lines[inner_lines_keys[i]] for i in order}
         outer_lines_ordered = {outer_lines_keys[i]: outer_lines[outer_lines_keys[i]] for i in order}
-        
+
         return inner_lines_ordered, outer_lines_ordered, angles, order
 
     @staticmethod
@@ -722,13 +712,12 @@ class TableTopViewProcessor:
                 has_boll = True
             if not touches_edge and area > 2400:
                 has_boll = True
-
             if not touches_edge and area < 2400:
                 has_dot = True
 
         return has_dot, has_boll, is_empty, debug_img, candidates_info, result_countours
 
-    def get_top_view(self) -> ImageResult:
+    def get_top_view(self):
         image = cv2.imread(str(self.full_img_path))
         scale_factor = 3360 / image.shape[1]
         new_dimensions = (3360, int(image.shape[0] * scale_factor))
@@ -1963,7 +1952,7 @@ def process_image(
         cv2.imwrite(str(output_image_path), cv2.cvtColor(image_result, cv2.COLOR_RGB2BGR))
     except Exception as e:
         logs.append(f"[ERROR] processing top-view:\n{e}\n{traceback.format_exc()}")
-    # return index, None, logs
+    return index, None, logs
     try:
         ball_result = BallsDetector(full_img_path, Path(img_path)).get_image_result()
         return index, ball_result, logs
@@ -1978,7 +1967,6 @@ def main() -> int:
     os.makedirs(args.topdown_dir, exist_ok=True)
     os.makedirs(args.output_json.parent, exist_ok=True)
 
-    # Load input JSON
     with open(args.input_json, "r") as f:
         input_data: dict = json.load(f)
         image_paths: list[str] = input_data.get("image_path", [])
