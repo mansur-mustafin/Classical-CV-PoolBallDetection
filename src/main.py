@@ -1,3 +1,12 @@
+"""
+Requirements:
+- numpy==2.4.3
+- opencv-python==4.13.0.92
+- scipy==1.17.1
+- tqdm==4.67.3
+- matplotlib==3.10.8
+"""
+
 import argparse
 import itertools
 import json
