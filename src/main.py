@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from typing import Optional
+from scipy.optimize import linear_sum_assignment
 
 import cv2
 import numpy as np
@@ -881,6 +882,7 @@ class BallsDetector:
     REFERENCE_COLORS = { 
         "Yellow": np.array([214, 147, 65]),
         "Blue": np.array([24, 67, 115]),
+        "Blue_Dark": np.array([25, 64, 100]),
         "Red": np.array([180, 55, 61]),
         "Red_Dark": np.array([138, 52, 56]),
         "Purple": np.array([74, 74, 111]),
@@ -888,8 +890,20 @@ class BallsDetector:
         "Orange_Bright": np.array([235, 110, 53]),
         "Green":np.array([40, 92, 85]),
         "Brown": np.array([123, 79, 53]),
+        "Brown_alt": np.array([80, 78, 62]),
         "White": np.array([247, 250, 187]),
         "Black": np.array([9, 32, 48]),
+    }
+
+    SOLID_NUMBERS = {
+    "Yellow": 1, "Blue": 2, "Red": 3, "Red_Dark": 3,
+    "Purple": 4, "Orange": 5, "Orange_Bright": 5,
+    "Green": 6, "Brown": 7, "White": 0, "Black": 8, "Blue_Dark": 2, "Brown_alt": 7
+    }
+    STRIPED_NUMBERS = {
+        "Yellow": 9, "Blue": 10, "Red": 11, "Red_Dark": 11,
+        "Purple": 12, "Orange": 13, "Orange_Bright": 13,
+        "Green": 14, "Brown": 15, "Blue_Dark": 10, "Brown_alt": 15
     }
     
     def __init__(self, full_image_path: Path, image_path: Path):
@@ -1257,6 +1271,270 @@ class BallsDetector:
 
         return self.hsv_image_shadow_masked
     
+    @staticmethod
+    def assign_white_and_black_balls(hsv_img, rgb_img, final_balls, reference_colors, white_thresh=0.75, black_thresh=0.50):
+        assignment_colors = {}
+        
+        white_rgb_uint8 = np.uint8([[reference_colors["White"]]])
+        white_hsv_sample = cv2.cvtColor(white_rgb_uint8, cv2.COLOR_RGB2HSV)[0][0]
+        black_ref = reference_colors["Black"]
+
+        best_white_ratio = 0
+        best_white_ball = -1
+        
+        best_black_ratio = 0
+        best_black_ball = -1
+
+        for (cx, cy, r) in final_balls:
+            mask = np.zeros(hsv_img.shape[:2], dtype=np.uint8)
+            cv2.circle(mask, (cx, cy), int(r * 0.86), 255, -1)
+            
+            hsv_pixels = hsv_img[mask == 255]
+            rgb_pixels = rgb_img[mask == 255]
+            
+            if len(hsv_pixels) == 0:
+                continue
+
+            # --- WHITE CHECK ---
+            is_white = (hsv_pixels[:, 1] < (white_hsv_sample[1] + 45)) & (hsv_pixels[:, 2] > 130)
+            white_ratio = np.sum(is_white) / len(hsv_pixels)    
+
+            # --- BLACK CHECK ---
+            dists_to_black = np.linalg.norm(rgb_pixels - black_ref, axis=1)
+            is_black = dists_to_black < 45
+            black_ratio = np.sum(is_black) / len(rgb_pixels)
+
+            if white_ratio > best_white_ratio:
+                best_white_ratio = white_ratio
+                best_white_ball = {
+                    "cx": cx, "cy": cy, "r": r,
+                    "ratio": float(white_ratio),
+                    "distance": 0.0  
+                }
+
+            if black_ratio > best_black_ratio:
+                best_black_ratio = black_ratio
+                best_black_ball = {
+                    "cx": cx, "cy": cy, "r": r,
+                    "ratio": float(black_ratio),
+                    "distance": 0.0   
+                }
+
+        if best_white_ball and best_white_ratio > white_thresh:
+            assignment_colors["White"] = best_white_ball
+            
+        if best_black_ball and best_black_ratio > black_thresh:
+            assignment_colors["Black"] = best_black_ball
+
+        return assignment_colors
+
+    @staticmethod
+    def map_balls_to_color_distances(hsv_img, rgb_img, final_balls, reference_colors, solid_dict, striped_dict):
+        COLOR_ALIASES = {
+            "Orange_Bright": "Orange",
+            "Red_Dark": "Red",
+            "Brown_alt": "Brown",
+            "Blue_Dark": "Blue"
+        }
+
+        white_rgb_uint8 = np.uint8([[reference_colors["White"]]])
+        white_hsv_sample = cv2.cvtColor(white_rgb_uint8, cv2.COLOR_RGB2HSV)[0][0]
+
+        for (cx, cy, r) in final_balls:
+            mask = np.zeros(rgb_img.shape[:2], dtype=np.uint8)
+            cv2.circle(mask, (cx, cy), int(r * 0.86), 255, -1)
+            
+            hsv_pixels = hsv_img[mask == 255]
+            rgb_pixels = rgb_img[mask == 255]
+            
+            if len(rgb_pixels) == 0:
+                continue
+                
+            is_white = (hsv_pixels[:, 1] < (white_hsv_sample[1] + 45)) & (hsv_pixels[:, 2] > 130)
+            white_ratio = np.sum(is_white) / len(hsv_pixels)
+
+            
+            if white_ratio > 0.2:
+                non_white_rgb = rgb_pixels[~is_white]
+                if len(non_white_rgb) == 0:
+                    continue
+                stripe_median_rgb = np.median(non_white_rgb, axis=0)
+                
+                ball_group_distances = {}
+                for color_name, ref_color in reference_colors.items():
+                    if color_name in ["White", "Black"]:
+                        continue
+                    
+                    dist = float(np.linalg.norm(stripe_median_rgb - ref_color))
+                    main_color_name = COLOR_ALIASES.get(color_name, color_name)
+                    
+                    if main_color_name not in ball_group_distances or dist < ball_group_distances[main_color_name]:
+                        ball_group_distances[main_color_name] = dist
+                
+                for main_color_name, best_dist in ball_group_distances.items():
+                    if main_color_name in striped_dict:
+                        striped_dict[main_color_name].append({
+                            "cx": cx, "cy": cy, "r": r, "distance": best_dist
+                        })
+            else:
+                median_rgb = np.median(rgb_pixels, axis=0)
+                
+                ball_group_distances = {}
+                for color_name, ref_color in reference_colors.items():
+                    if color_name in ["White", "Black"]:
+                        continue
+                    
+                    dist = float(np.linalg.norm(median_rgb - ref_color))
+                    main_color_name = COLOR_ALIASES.get(color_name, color_name)
+                    
+                    if main_color_name not in ball_group_distances or dist < ball_group_distances[main_color_name]:
+                        ball_group_distances[main_color_name] = dist
+                
+                for main_color_name, best_dist in ball_group_distances.items():
+                    if main_color_name in solid_dict:
+                        solid_dict[main_color_name].append({
+                            "cx": cx, "cy": cy, "r": r, "distance": best_dist
+                        })
+
+        for d in [solid_dict, striped_dict]:
+            for color in d:
+                d[color].sort(key=lambda b: b["distance"])
+
+        return solid_dict, striped_dict
+
+    @staticmethod
+    def build_assignment_map(solid_results, striped_results, SOLID_NUMBERS, STRIPED_NUMBERS): #Greedy method
+        assignment_map = {}
+        def process_group(results_dict, number_map):
+            candidates = []
+            for color, balls in results_dict.items():
+                if color not in number_map:
+                    continue
+
+                ball_number = number_map[color]
+
+                for ball in balls:
+                    candidates.append((
+                        ball["distance"],
+                        ball_number,
+                        ball
+                    ))
+            candidates.sort(key=lambda x: x[0])
+
+    
+            for dist, number, ball in candidates:
+                if number not in assignment_map:
+                    assignment_map[number] = ball
+
+        process_group(solid_results, SOLID_NUMBERS)
+        process_group(striped_results, STRIPED_NUMBERS)
+        return assignment_map
+    
+    @staticmethod
+    def build_first_ball_map(solid_results, striped_results, SOLID_NUMBERS, STRIPED_NUMBERS): #GREEDY TAKE THE BEST MATCH FIRST SORTED BY DISTANCE
+        assignment_map = {}
+        
+
+        used_balls = set() 
+
+        def process_group(results_dict, number_map):
+            all_potential_matches = []
+            for color, balls in results_dict.items():
+                if color not in number_map:
+                    continue
+                for ball in balls:
+                    all_potential_matches.append({
+                        "color": color,
+                        "distance": ball["distance"],
+                        "ball_data": ball
+                    })
+
+            all_potential_matches.sort(key=lambda x: x["distance"])
+
+            assigned_colors = set()
+
+            for match in all_potential_matches:
+                color = match["color"]
+                ball = match["ball_data"]
+                ball_coords = (ball["cx"], ball["cy"])
+
+                if color in assigned_colors:
+                    continue
+                if ball_coords in used_balls:
+                    continue
+
+                ball_number = number_map[color]
+                assignment_map[ball_number] = ball
+                assigned_colors.add(color)
+                used_balls.add(ball_coords)
+
+        process_group(solid_results, SOLID_NUMBERS)
+        process_group(striped_results, STRIPED_NUMBERS)
+
+        return assignment_map
+    @staticmethod
+    def build_optimal_ball_map(solid_results, striped_results, SOLID_NUMBERS, STRIPED_NUMBERS): #HUNGARIAN ALGORITHM VERSION
+        assignment_map = {}
+        used_balls = set() 
+
+        def process_group(results_dict, number_map):
+
+            target_colors = [c for c in number_map.keys() if c in results_dict and results_dict[c]]
+            if not target_colors:
+                return
+
+            unique_balls_dict = {}
+            for color in target_colors:
+                for b in results_dict[color]:
+                    coords = (b["cx"], b["cy"])
+                    if coords not in used_balls:
+                        unique_balls_dict[coords] = b
+                        
+            unique_ball_coords = list(unique_balls_dict.keys())
+            if not unique_ball_coords:
+                return
+
+            cost_matrix = np.full((len(target_colors), len(unique_ball_coords)), 1000.0)
+
+            for i, color in enumerate(target_colors):
+                for b in results_dict[color]:
+                    coords = (b["cx"], b["cy"])
+                    if coords in unique_ball_coords:
+                        j = unique_ball_coords.index(coords)
+                        cost_matrix[i, j] = b["distance"]
+
+            row_ind, col_ind = linear_sum_assignment(cost_matrix)
+
+            for i, j in zip(row_ind, col_ind):
+
+                if cost_matrix[i, j] < 1000.0:
+                    color = target_colors[i]
+                    ball_number = number_map[color]
+                    coords = unique_ball_coords[j]
+                    
+                    assignment_map[ball_number] = unique_balls_dict[coords]
+                    used_balls.add(coords)
+
+        process_group(solid_results, SOLID_NUMBERS)
+        process_group(striped_results, STRIPED_NUMBERS)
+        return assignment_map
+    
+    @staticmethod
+    def get_assignment_data(assignment_map, final_balls):
+        coord_to_ids = {}
+        for number, ball in assignment_map.items():
+            coords = (int(ball["cx"]), int(ball["cy"]))
+            if coords not in coord_to_ids:
+                coord_to_ids[coords] = []
+            coord_to_ids[coords].append(number)
+        results = []
+        for (cx, cy, r) in final_balls:
+            coords = (int(cx), int(cy))
+            matches = coord_to_ids.get(coords, [-1])
+            for ball_id in matches:
+                results.append((ball_id, (int(cx), int(cy)), int(r)))
+        return results
+
     def get_image_result(self) -> ImageResult:
         #image = cv2.imread(self.full_img_path)
         #image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
@@ -1423,9 +1701,15 @@ class BallsDetector:
         dist_to_state = math.hypot(s_freq - self.s_med, v_freq - self.v_med)
         dist_to_dark = math.hypot(s_freq - dark_cloth_s, v_freq - dark_cloth_v)
 
-        d_h_tol = 6
-        d_s_tol = 35
-        d_v_tol_up = 40
+        # d_h_tol = 6
+        # d_s_tol = 35    #TWEAK PARAMETERS HERE
+        # d_v_tol_up = 40
+
+        # d_v_tol_down = 60
+
+        d_h_tol = 8
+        d_s_tol = 60
+        d_v_tol_up = 65
 
         d_v_tol_down = 60
 
@@ -1480,7 +1764,7 @@ class BallsDetector:
 
         opened_mask_blurred = cv2.medianBlur(opened_mask, 7)
 
-        print(self.is_angle_l, self.is_angle_r)
+        #print(self.is_angle_l, self.is_angle_r)
         if(self.is_angle_l or self.is_angle_r):     #PARAMETERS FOR ANGLED VIEWS
             circles = cv2.HoughCircles(
                 opened_mask,          
@@ -1520,7 +1804,7 @@ class BallsDetector:
 
         if circles is not None:
             circles = np.round(circles[0, :]).astype("int")
-            print(f"Found {len(circles)} circle(s) initially")  
+            #print(f"Found {len(circles)} circle(s) initially")  
             valid_circles = []
             for (cx, cy, r) in circles:
                 A, B, C = self.side_line_r_inner_full
@@ -1578,10 +1862,58 @@ class BallsDetector:
 
         final_balls = [c for i, c in enumerate(valid_circles) if i not in indices_to_drop]
 
-        detected_balls_info = []
-        for (cx, cy, r) in final_balls:
-            ball_id = BallsDetector.classify_ball(self.hsv_image, rgb_image, cx, cy, r)
-            detected_balls_info.append((ball_id, (cx, cy), r))
+        solid_results = {color_name: [] for color_name in self.REFERENCE_COLORS.keys()}
+        striped_results = {color_name: [] for color_name in self.REFERENCE_COLORS.keys()}
+
+        self.map_balls_to_color_distances(
+            self.hsv_image, 
+            rgb_image, 
+            final_balls, 
+            self.REFERENCE_COLORS, 
+            solid_results, 
+            striped_results
+        )
+        solid_results.pop("Red_Dark", None)
+        solid_results.pop("Orange_Bright", None)
+        solid_results.pop("Brown_alt", None)
+        solid_results.pop("Blue_Dark", None)
+        striped_results.pop("Red_Dark", None)
+        striped_results.pop("Orange_Bright", None)
+        striped_results.pop("Brown_alt", None)
+        striped_results.pop("Blue_Dark", None)
+
+        special_balls = self.assign_white_and_black_balls(
+            hsv_img=self.hsv_image, 
+            rgb_img=rgb_image, 
+            final_balls=final_balls, 
+            reference_colors=self.REFERENCE_COLORS,
+            white_thresh=0.75, 
+            black_thresh=0.35
+        )
+
+        if "White" in special_balls:
+            solid_results["White"] = [special_balls["White"]]
+
+        if "Black" in special_balls:
+            solid_results["Black"] = [special_balls["Black"]]
+
+# print("SOLID BALLS ASSIGNMENT:")
+# for color, balls in solid_results.items():
+#     for ball in balls:
+#         print(f"  {color}: (cx={ball['cx']}, cy={ball['cy']}, r={ball['r']}, distance={ball['distance']:.2f})")
+# print("\nSTRIPED BALLS ASSIGNMENT:")
+# for color, balls in striped_results.items():
+#     for ball in balls:
+#         print(f"  {color}: (cx={ball['cx']}, cy={ball['cy']}, r={ball['r']}, distance={ball['distance']:.2f})")    
+
+        assignment_map = self.build_optimal_ball_map(solid_results,striped_results,self.SOLID_NUMBERS,self.STRIPED_NUMBERS) #change between greedy or hungarian algo
+       # detected_balls_info = []
+        #for (cx, cy, r) in final_balls:
+        #    ball_id = BallsDetector.classify_ball(self.hsv_image, rgb_image, cx, cy, r)
+  
+        detected_balls_info = self.get_assignment_data(assignment_map, final_balls)
+
+       # detected_balls_info.append((ball_id, (cx, cy), r))
 
         # Create BallDetection objects for the output JSON        
         ball_detections = [
