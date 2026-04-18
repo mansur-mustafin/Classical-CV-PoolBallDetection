@@ -1574,10 +1574,10 @@ class BallsDetector:
         h_freq, s_freq, v_freq = BallsDetector.get_center_mode_hsv(self.hsv_image, area_ratio=0.20)
 
        # print(f"Most frequent HSV in the center 20%: H={h_freq}, S={s_freq}, V={v_freq}")
-        lower_blue, upper_blue, _ = TableTopViewProcessor.get_upper_lower_blue(self.hsv_image, hue_window=5)
         #lower_blue = np.array([h_freq - h_tol, s_freq- s_tol, v_freq - v_tol_down])
         #upper_blue = np.array([h_freq + h_tol, s_freq + s_tol, v_freq + v_tol_up])
-
+        lower_blue, upper_blue, _ = TableTopViewProcessor.get_upper_lower_blue(self.hsv_image, hue_window=5)
+   
         # Clip to valid HSV ranges
         lower_blue = np.clip(lower_blue, [0, 0, 0], [179, 255, 255])
         upper_blue = np.clip(upper_blue, [0, 0, 0], [179, 255, 255])
@@ -1808,8 +1808,9 @@ class BallsDetector:
                 A, B, C = self.side_line_r_inner_full
                 perp_distance = abs(A * cx + B * cy + C) / np.sqrt(A**2 + B**2)
                 is_above = BallsDetector.is_above_line((cx, cy), self.side_line_r_inner_full)
-                if (not self.is_top) and is_above and perp_distance > padding_area:
-                    continue          
+                is_below_bot = not BallsDetector.is_above_line((cx, cy), self.bot_line_inner_full) 
+                if ((not self.is_top) and is_above and (perp_distance> padding_area)) or is_below_bot:
+                    continue      
                 valid_circles.append((cx, cy, r))
             
             # check overlaps
