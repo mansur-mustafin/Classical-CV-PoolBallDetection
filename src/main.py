@@ -1886,25 +1886,15 @@ class BallsDetector:
         if "Black" in special_balls:
             solid_results["Black"] = [special_balls["Black"]]
 
-# print("SOLID BALLS ASSIGNMENT:")
-# for color, balls in solid_results.items():
-#     for ball in balls:
-#         print(f"  {color}: (cx={ball['cx']}, cy={ball['cy']}, r={ball['r']}, distance={ball['distance']:.2f})")
-# print("\nSTRIPED BALLS ASSIGNMENT:")
-# for color, balls in striped_results.items():
-#     for ball in balls:
-#         print(f"  {color}: (cx={ball['cx']}, cy={ball['cy']}, r={ball['r']}, distance={ball['distance']:.2f})")    
-
         assignment_map = self.build_optimal_ball_map(solid_results,striped_results,self.SOLID_NUMBERS,self.STRIPED_NUMBERS) #change between greedy or hungarian algo
-       # detected_balls_info = []
+        # detected_balls_info = []
         #for (cx, cy, r) in final_balls:
         #    ball_id = BallsDetector.classify_ball(self.hsv_image, rgb_image, cx, cy, r)
-  
+
         detected_balls_info = self.get_assignment_data(assignment_map, final_balls)
+    # detected_balls_info.append((ball_id, (cx, cy), r))
 
-       # detected_balls_info.append((ball_id, (cx, cy), r))
-
-        # Create BallDetection objects for the output JSON        
+    # Create BallDetection objects for the output JSON        
         ball_detections = [
             BallDetection(
                 number=ball_id,
@@ -1952,7 +1942,7 @@ def process_image(
         cv2.imwrite(str(output_image_path), cv2.cvtColor(image_result, cv2.COLOR_RGB2BGR))
     except Exception as e:
         logs.append(f"[ERROR] processing top-view:\n{e}\n{traceback.format_exc()}")
-    return index, None, logs
+        #return index, None, logs
     try:
         ball_result = BallsDetector(full_img_path, Path(img_path)).get_image_result()
         return index, ball_result, logs
