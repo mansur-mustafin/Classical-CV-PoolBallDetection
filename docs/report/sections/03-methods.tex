@@ -11,11 +11,11 @@ Table localization is performed in the HSV color space using an adaptive estimat
 
 After thresholding, the resulting binary mask is refined with morphological opening and closing to remove isolated noise and fill small gaps. Because the scene may contain other objects with similar colors, only contours that are spatially close to the largest table-colored region are retained. This step preserves the full table area while discarding unrelated background regions.
 
-The table boundaries are recovered from the cleaned mask through edge detection followed by a probabilistic Hough transform. Only sufficiently long line segments are kept, since short segments are more likely to correspond to noise. Each detected segment is then converted into Hesse normal form, which provides a convenient representation for comparing orientation and distance from the table center. Lines with similar orientation and nearby offsets are grouped together, and within each group the line farther from the center is interpreted as an outer cushion boundary while the closer one is treated as an inner playing-surface boundary.
+The table boundaries are recovered from the cleaned mask through edge detection followed by a probabilistic Hough transform \cite{Canny1986,MATAS2000119}. Only sufficiently long line segments are kept, since short segments are more likely to correspond to noise. Each detected segment is then converted into Hesse normal form, which provides a convenient representation for comparing orientation and distance from the table center. Lines with similar orientation and nearby offsets are grouped together, and within each group the line farther from the center is interpreted as an outer cushion boundary while the closer one is treated as an inner playing-surface boundary.
 
 In challenging cases, more than four candidate line groups may be produced. To obtain a single rectangular hypothesis, combinations of four lines are evaluated by intersecting them and scoring the resulting quadrilateral. The score favors large shapes whose opposite sides have similar lengths, which is consistent with the expected geometry of a billiard table. If the initial color thresholding yields too few valid lines, the hue interval is relaxed and the detection stage is repeated.
 
-Once the four relevant boundaries are selected, the lines are ordered clockwise around the estimated table center and their intersections are used to define the table corners. Two perspective rectifications are then performed. First, the inner boundary is warped to a square reference image, which provides a convenient intermediate view for orientation analysis. Second, after the correct orientation has been determined, the outer boundary is warped to the final rectangular top-view image.
+Once the four relevant boundaries are selected, the lines are ordered clockwise around the estimated table center and their intersections are used to define the table corners. Two perspective rectifications are then performed \cite{Hartley2004}. First, the inner boundary is warped to a square reference image, which provides a convenient intermediate view for orientation analysis. Second, after the correct orientation has been determined, the outer boundary is warped to the final rectangular top-view image.
 
 From the initial square warp, four small patches are sampled at the right, bottom, left, and top sides of the table. Each patch is examined for non-cloth regions using the previously estimated table color. After morphological cleanup, contour size and contact with the patch border are used to distinguish small cue-position markers from larger regions caused by a ball. The preferred orientation is chosen according to the strongest available cue: a detected marker alone is preferred, followed by a marker accompanied by a ball, and finally by the largest ball-like region. If none of these visual cues is sufficiently reliable, a fallback rule based on the coarse viewpoint geometry of the detected quadrilateral is used.
 
@@ -27,3 +27,79 @@ During perspective warping, some transformed coordinates may fall outside the so
     \caption{Pipeline for table localization, perspective rectification, and orientation normalization.}
     \label{fig:topview-pipeline}
 \end{figure*}
+
+
+\subsection{Ball Position Detection}
+
+\begin{itemize}
+    \item Obtain the inner and outer table lines, corner points, and the view angle using the functions described in the previous section.
+    
+    \item Apply a shadow mask to the boundary regions between the inner and outer lines according to the view angle:
+    \begin{itemize}
+        \item \textbf{Front view:} apply the mask to the top region.
+        \item \textbf{Angled view:} apply the mask to the side regions.
+        \item \textbf{Top view:} no mask is applied.
+    \end{itemize}
+    
+    \item Patch holes according to the view angle:
+    \begin{itemize}
+        \item \textbf{Front or angled view:} patch corner holes using a semicircle centered between the points defined by the intersections of the outer and inner lines, with radius given by the distance between these points.
+        \item \textbf{Top view:} since there is no perspective distortion and the holes are larger, use the calculated midpoints and patch them with a circle of fixed radius.
+    \end{itemize}
+    
+    \item Remove the background using the sampled mode of the H, S, and V pixel values, with increased tolerance to eliminate additional shadows beneath and around the balls.
+    
+    \item Apply dilation followed by erosion using an elliptical $3\times3$ kernel for six iterations.
+    
+    \item Apply erosion followed by dilation using an elliptical $3\times3$ kernel for six iterations.
+    
+    \item Apply a median blur with a $7\times7$ kernel.
+    
+    \item Detect circles using the Hough Circle Transform with parameters fine-tuned for different view angles.
+    
+    \item Remove overlapping circles and circles whose centers lie outside the inner table lines:
+    \begin{itemize}
+        \item If
+        \[
+        A_{\text{small}} < 0.4 \, A_{\text{large}},
+        \]
+        remove the smaller circle.
+        
+        \item If
+        \[
+        \mathrm{area}(C_{\text{small}} \cap C_{\text{large}}) \geq 0.5 \, A_{\text{small}},
+        \]
+        keep the larger circle.
+    \end{itemize}
+\end{itemize}
+
+\begin{figure}[h]
+    \centering
+    \includegraphics[width=\linewidth]{img/ball_position_detection.png}
+    \caption{Left: final color mask. Middle: effect of patching holes and removing shadows. Right: removal of overlapping circles.}
+    \label{fig:ball_position_detection}
+\end{figure}
+
+\subsection{Ball Number (Color) Detection}
+
+\begin{itemize}
+    \item Calibrate the reference colors by sampling the balls on the table.
+    
+    \item \textbf{White and black balls:} threshold the percentage of pixels identified as black or white, and assign the label to the ball with the highest percentage.
+    
+    \item \textbf{Striped or solid balls:} classify them using the percentage of white pixels.
+    
+    \item Initialize a dictionary of the form
+    \[
+    C_1, \ldots, C_n : b_1, \ldots, b_m,
+    \]
+    where $n$ is the total number of colors and $m$ is the number of balls on the table. Each entry stores the distance of every ball to the corresponding reference color in RGB space.
+    
+    \item Convert this dictionary into a definite assignment map using either:
+    \begin{itemize}
+        \item a greedy approach, in which the smallest distance between any ball and any color is repeatedly selected until every color has at least one associated ball, or
+        \item the Hungarian algorithm, which minimizes the total assignment cost (see Annex~I).
+    \end{itemize}
+    
+    \item For each detected ball, check the assignment map and assign the most probable color (number).
+\end{itemize}

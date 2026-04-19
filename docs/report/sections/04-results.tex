@@ -2,3 +2,7 @@
 \label{sec:results}
 
 The generated top-view images produced good results in most cases, providing a stable and visually consistent representation of the table. Their correctness was assessed manually by checking whether the resulting image was geometrically and orientation-wise correct.
+
+We were able to determine the position and number of balls with good accuracy in most tables. By manually inspecting the images in the training set we estimate that our MAE should be less than 1. This can be verified by testing with a pipeline of correctly annotated images.
+
+The color of the balls is very difficult to determine in many cases, especially in striped balls, the lighting and shadows as well as the overlapping balls have a detrimental effect on the classification. The color mappings used seem to have better precision than the naive method, at the cost of recall in some cases (see annex I).
