@@ -150,7 +150,7 @@ class TableTopViewProcessor:
         return filtered_mask_table, contours_close
 
     @staticmethod
-    def get_lines(mask_image: np.ndarray, min_length=250) -> list[np.ndarray]:
+    def get_lines(mask_image: np.ndarray, min_length: int=250) -> list[np.ndarray]:
         edges = cv2.Canny(mask_image, 50, 150)
 
         lines = []
@@ -323,8 +323,6 @@ class TableTopViewProcessor:
 
     @staticmethod
     def select_4_groups_v2(inner_lines, outer_lines, h, w):
-        print(f"Trying to select 4 groups from {len(inner_lines)} inner lines and {len(outer_lines)} outer lines")
-        
         parallelism_inner = {}
         for (i, (_, _, theta_i)), (j, (_, _, theta_j)) in itertools.combinations(inner_lines.items(), 2):
             diff = TableTopViewProcessor.get_diff_pi(theta_i, theta_j)
@@ -367,7 +365,7 @@ class TableTopViewProcessor:
         return result_inner, result_outer
 
     @staticmethod
-    def rectangle_score(points, h, w, image):
+    def rectangle_score(points: list[tuple[float, float]], h: int, w: int, image: np.ndarray):
         points = np.asarray(points, dtype=np.float32)
         points = TableTopViewProcessor.order_points_clockwise(points)
 
@@ -418,7 +416,7 @@ class TableTopViewProcessor:
         return opp_sim_1 + opp_sim_2 + white_ratio
 
     @staticmethod
-    def order_points_clockwise(points):
+    def order_points_clockwise(points: list[tuple[float, float]]):
         points = np.asarray(points, dtype=np.float32)
         center = np.mean(points, axis=0)
         angles = np.arctan2(points[:, 1] - center[1], points[:, 0] - center[0])
@@ -426,7 +424,7 @@ class TableTopViewProcessor:
         return points[order]
 
     @staticmethod
-    def select_4_groups_v3(lines, image):
+    def select_4_groups_v3(lines: dict, image: np.ndarray):
         h, w = image.shape[:2]
         keys = list(lines.keys())
         best_lines = None
@@ -454,7 +452,11 @@ class TableTopViewProcessor:
         return best_lines, best_points, best_score
 
     @staticmethod
-    def line_intersection_infinite(l1, l2, eps=1e-9):
+    def line_intersection_infinite(
+        l1: tuple[float, float, float, float], 
+        l2: tuple[float, float, float, float], 
+        eps: float=1e-9
+    ) -> Optional[tuple[float, float]]:
         x1, y1, x2, y2 = map(float, l1[0])
         x3, y3, x4, y4 = map(float, l2[0])
 
@@ -469,7 +471,7 @@ class TableTopViewProcessor:
         return float(px), float(py)
 
     @staticmethod
-    def get_intersections(lines, h, w):
+    def get_intersections(lines: dict, h: int, w: int) -> np.ndarray:
         if isinstance(lines, dict):
             line_segments = [seg[0] for seg in lines.values()]
         else:
@@ -489,7 +491,7 @@ class TableTopViewProcessor:
         return intersection_points
 
     @staticmethod
-    def order_inner_outer_lines(inner_lines, outer_lines, center):
+    def order_inner_outer_lines(inner_lines: dict, outer_lines: dict, center: tuple[float, float]):
         inner_lines_keys = np.array(list(inner_lines.keys()))
         outer_lines_keys = np.array(list(outer_lines.keys()))
         centers_inner = []
@@ -508,7 +510,7 @@ class TableTopViewProcessor:
         return inner_lines_ordered, outer_lines_ordered, angles, order
 
     @staticmethod
-    def get_intersections_ordered(lines, h, w):
+    def get_intersections_ordered(lines: dict, h: int, w: int) -> np.ndarray:
         """
         lines are ordered by clockwise angle around the center
         """
@@ -532,7 +534,10 @@ class TableTopViewProcessor:
         return intersection_points
 
     @staticmethod
-    def order_points_by_angle(points_a, points_b):
+    def order_points_by_angle(
+        points_a: np.ndarray, 
+        points_b: np.ndarray
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]], np.ndarray, np.ndarray]:
         """
         Order points in points_a by angle from center, 
         and find closest point in points_b for each point in points_a
@@ -559,9 +564,10 @@ class TableTopViewProcessor:
         return points_a_ord, points_b_ord, angles, order
 
     @staticmethod
-    def got_angle(points) -> tuple[bool, bool, bool, tuple]:
+    def got_angle(points: np.ndarray) -> tuple[bool, bool, bool, tuple]:
         """
         (t1, t2, b1, b2), where t1, t2 are top points, b1, b2 are bottom points
+        returns if table is in top view, front view, or angle view
         """
         is_top, is_front, is_angle = False, False, False
 
@@ -716,7 +722,6 @@ class TableTopViewProcessor:
             x, y, bw, bh = cv2.boundingRect(cnt)
             touches_edge = (x <= 1 or y <= 1 or x + bw >= w - 2 or y + bh >= h - 2)
 
-            # TODO: make decision here
             if touches_edge:
                 has_boll = True
             if not touches_edge and area > 2400:
