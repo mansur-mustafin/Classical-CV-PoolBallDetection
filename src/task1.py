@@ -18,12 +18,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 from typing import Optional
-from scipy.optimize import linear_sum_assignment
 
 import cv2
 import numpy as np
-from cv2 import Mat
-from numpy import ndarray, dtype, generic, integer, floating
+from scipy.optimize import linear_sum_assignment
 
 
 @dataclass(frozen=True)

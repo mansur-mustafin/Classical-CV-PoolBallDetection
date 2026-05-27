@@ -1,10 +1,12 @@
 # Main
 .idea/
 .vscode/
+checkpoints/
 data/*
 !data/json/input.json
 !data/json/output_example.json
 !data/development_set/*
+!data/dataset/
 .DS_Store
 
 # Byte-compiled / optimized / DLL files
