@@ -13,11 +13,12 @@ import math
 import os
 import random
 import time
-from dataclasses import dataclass
+from dataclasses import MISSING, dataclass, fields
 from pathlib import Path
 from typing import Any
 from typing import Callable, Dict
 from typing import List
+from typing import Type, TypeVar
 
 import albumentations as A
 import cv2
@@ -354,13 +355,9 @@ def main() -> int:
 
     os.makedirs(args.output_json.parent, exist_ok=True)
 
-    config = PoolBallCounterConfig(
-        image_dir_train=args.image_dir_train,
-        image_dir_val=args.image_dir_val,
-        image_dir_test=args.image_dir_test,
-        output_json=args.output_json,
-        model_name=args.model_name,
-    )
+    field_names = {f.name for f in fields(PoolBallCounterConfig)}
+    kwargs = {k: v for k, v in vars(args).items() if k in field_names and v is not None}
+    config = PoolBallCounterConfig(**kwargs)
 
     set_seed(config.seed)
 
